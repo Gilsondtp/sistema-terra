@@ -1,0 +1,11 @@
+body {
+    padding-top: 80px; /* Ajuste conforme a altura real da navbar */
+}
+.navbar {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+.navbar .btn {
+    font-size: 1.1rem;
+    font-weight: 500;
+    border-radius: 20px;
+}
