@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+{% block title %}Lanc. Diário - {{ site_title }}{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho de Impressão (visível apenas na impressão) -->
+<div class="d-none d-print-block mb-3 border-bottom pb-2">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="mb-0 fw-bold">TERRA FOTOLITO &amp; CTP — Listagem de Lançamento Diário</h4>
+            <small>Emitido em: {{ hoje_br }}</small>
+        </div>
+        <div class="text-end small">
+            Modo: <strong>{{ modo_filtro|upper }}</strong>
+            {% if data_sel %} | Data: <strong>{{ data_sel|data_br }}</strong>{% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Barra Superior de Filtros e Ações -->
+<div class="card mb-3 no-print">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2">
+            <h5 class="mb-0 fw-bold text-primary">
+                <i class="fas fa-bolt me-1"></i> LANC. DIÁRIO — Monitoramento e Serviços
+            </h5>
+            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="fas fa-satellite-dish me-1"></i> Hot Folder Ativo
+            </span>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-primary btn-sm px-3 fw-semibold" onclick="abrirModalNovoLancamento()">
+                <i class="fas fa-plus me-1"></i> Criar Lançamento
+            </button>
+            <button type="button" class="btn btn-outline-danger btn-sm px-3 fw-semibold" data-bs-toggle="modal" data-bs-target="#modalViradaMes" title="Transferir saldos do mês anterior para Fatura Anterior e limpar lançamentos antigos">
+                <i class="fas fa-calendar-check me-1"></i> Virada de Mês (Fatura Anterior)
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
+                <i class="fas fa-vial me-1"></i> Testar / Simular Hot Folder
+            </button>
+            <form method="POST" action="{{ url_for('escanear_hotfolder_manual') }}" class="d-inline">
+                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+                <button type="submit" class="btn btn-outline-success btn-sm" title="Varre imediatamente a pasta Hot Folder">
+                    <i class="fas fa-sync-alt me-1"></i> Atualizar Pasta
+                </button>
+            </form>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.print()">
+                <i class="fas fa-print me-1"></i> Imprimir Listagem
+            </button>
+        </div>
+    </div>
+
+    <div class="card-body py-3">
+        <form id="formFiltroDiario" method="GET" action="{{ url_for('lancamento_diario') }}">
+            <div class="row g-2 align-items-end">
+                <!-- Seletor do Modo de Exibição (Padrão: Lançamento Diário) -->
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold mb-1">Modo de Exibição</label>
+                    <select class="form-select form-select-sm fw-semibold" name="modo" id="sel_modo_filtro" onchange="aoMudarModoExibicao()">
+                        <option value="diario" {% if modo_filtro == 'diario' %}selected{% endif %}>Lançamento Diário (Padrão)</option>
+                        <option value="cliente" {% if modo_filtro == 'cliente' %}selected{% endif %}>Por Cliente</option>
+                        <option value="produto" {% if modo_filtro == 'produto' %}selected{% endif %}>Por Produto (Chapa)</option>
+                        <option value="servico" {% if modo_filtro == 'servico' %}selected{% endif %}>Por Descrição do Serviço</option>
+                        <option value="nao_identificados" {% if modo_filtro == 'nao_identificados' %}selected{% endif %}>Apenas Não Identificados</option>
+                    </select>
+                </div>
+
+                <!-- Data Selecionada (atualiza ao selecionar) -->
+                <div class="col-md-2" id="box_filtro_data_dia">
+                    <label class="form-label small fw-bold mb-1">Data (ou vazio = todas)</label>
+                    <input type="date" class="form-control form-control-sm" id="input_data_diario" name="data" value="{{ data_sel }}" onchange="this.form.submit()">
+                </div>
+
+                <!-- Filtro por Cliente -->
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold mb-1">Cliente</label>
+                    <select class="form-select form-select-sm" name="cliente_id" onchange="this.form.submit()">
+                        <option value="">Todos os clientes</option>
+                        <option value="nao_identificado" class="text-danger fw-bold" {% if cliente_id == 'nao_identificado' %}selected{% endif %}>
+                            ⚠ NÃO IDENTIFICADOS
+                        </option>
+                        {% for c in clientes %}
+                            <option value="{{ c.id }}" {% if cliente_id == (c.id|string) %}selected{% endif %}>{{ c.nome }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Filtro por Produto (Chapa) -->
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold mb-1">Produto (Chapa)</label>
+                    <select class="form-select form-select-sm" name="produto_id" onchange="this.form.submit()">
+                        <option value="">Todos os produtos</option>
+                        {% for p in produtos %}
+                            <option value="{{ p.id }}" {% if produto_id == (p.id|string) %}selected{% endif %}>{{ p.nome }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Filtro por Descrição do Serviço (Texto) -->
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold mb-1">Descrição do Serviço</label>
+                    <input type="text" class="form-control form-control-sm" name="texto_servico" value="{{ texto_servico }}" placeholder="Ex: cartaz, folder...">
+                </div>
+
+                <!-- Botões Filtrar / Limpar -->
+                <div class="col-md-2 d-flex gap-1">
+                    <button type="submit" class="btn btn-primary btn-sm w-100" title="Aplicar Filtro">
+                        <i class="fas fa-search me-1"></i> Filtrar
+                    </button>
+                    <a href="{{ url_for('lancamento_diario') }}" class="btn btn-outline-secondary btn-sm" title="Voltar para Hoje">
+                        Hoje
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Tabela Principal de Serviços Monitorados / Lançados -->
+<div class="card mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 90px;" class="text-center">Data</th>
+                        <th style="min-width: 220px;">Cliente</th>
+                        <th>Descrição do Serviço</th>
+                        <th style="width: 145px;" class="text-center">Cores / Origem</th>
+                        <th style="width: 130px;" class="text-center">Produto (Chapa)</th>
+                        <th style="width: 110px;" class="text-end">Quant. Produto</th>
+                        <th style="width: 130px;" class="text-end">Valor (R$)</th>
+                        <th style="width: 170px;" class="text-center no-print">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if itens_diarios %}
+                        {% for item in itens_diarios %}
+                            <tr class="{% if not item.identificado %}row-nao-identificado{% endif %}">
+                                <td class="text-center">{{ item.data_lancamento | data_br }}</td>
+                                <td>
+                                    {% if item.identificado %}
+                                        <span class="fw-semibold">{{ item.cliente_nome }}</span>
+                                    {% else %}
+                                        <div class="d-flex flex-column gap-1">
+                                            <span class="texto-nao-identificado">
+                                                <i class="fas fa-triangle-exclamation me-1"></i>
+                                                NÃO IDENTIFICADO
+                                                {% if item.cliente_nome_original %}
+                                                    <span class="small">({{ item.cliente_nome_original }})</span>
+                                                {% endif %}
+                                            </span>
+                                            <!-- Atribuição rápida de cliente diretamente na linha -->
+                                            <form method="POST" action="{{ url_for('atribuir_cliente_route') }}" class="d-flex gap-1 align-items-center no-print mt-1">
+                                                <input type="hidden" name="lancamento_id" value="{{ item.lancamento_id }}">
+                                                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+                                                <input type="hidden" name="salvar_apelido" value="1">
+                                                <select name="cliente_id" class="form-select form-select-sm py-0" style="font-size: 0.8rem;" required>
+                                                    <option value="">Atribuir cliente...</option>
+                                                    {% for c in clientes %}
+                                                        <option value="{{ c.id }}">{{ c.nome }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <button type="submit" class="btn btn-sm btn-danger py-0 px-2" title="Vincular este cliente">
+                                                    <i class="fas fa-check"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td class="{% if not item.identificado %}texto-nao-identificado{% endif %}">
+                                    {{ item.descricao }}
+                                    {% if item.valor_entrega > 0 %}
+                                        <span class="badge bg-info text-dark ms-1">Entrega: R$ {{ item.valor_entrega | moeda }}</span>
+                                    {% endif %}
+                                    {% if item.valor_pagamento > 0 %}
+                                        <span class="badge bg-success ms-1">Pagtº: R$ {{ item.valor_pagamento | moeda }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item.cores_detectadas %}
+                                        {% for cor_item in item.cores_detectadas.split(',') %}
+                                            {% set c_trim = cor_item.strip() %}
+                                            {% set c_end = c_trim.split('-')[-1] %}
+                                            <span class="badge badge-cor badge-cor-{{ c_end if c_end in ['C','M','Y','K','GRAY'] else 'OTHER' }}">
+                                                {{ c_trim }}
+                                            </span>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="badge bg-secondary-subtle text-secondary">Manual</span>
+                                    {% endif %}
+                                    {% if item.pasta_origem %}
+                                        <div class="text-muted" style="font-size: 0.7rem;">Pasta: {{ item.pasta_origem }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center fw-semibold">{{ item.produto_nome }}</td>
+                                <td class="text-end fw-bold">{{ item.quantidade }}</td>
+                                <td class="text-end fw-bold">R$ {{ item.valor | moeda }}</td>
+                                <td class="text-center no-print">
+                                    <button type="button" class="btn btn-sm btn-warning"
+                                            onclick='abrirModalEditarLancamento({{ item.lancamento_obj | tojson }})'
+                                            title="Editar Lançamento">
+                                        <i class="fas fa-edit"></i> Editar
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-danger"
+                                            onclick="confirmarExclusaoLancamento({{ item.lancamento_id }}, {{ item.servico_id or 0 }})"
+                                            title="Apagar Registro">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+                                Nenhum serviço encontrado para o filtro selecionado.
+                                <div class="mt-2 no-print">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
+                                        <i class="fas fa-vial me-1"></i> Simular entrada de arquivos no Hot Folder
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-primary ms-1" onclick="abrirModalNovoLancamento()">
+                                        <i class="fas fa-plus me-1"></i> Criar Lançamento Manual
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+                <!-- Soma no final das colunas Quantidade de Produto e de Valores conforme especificação -->
+                <tfoot class="table-secondary fw-bold">
+                    <tr>
+                        <td colspan="5" class="text-end fs-6">SOMA DA LISTAGEM EXIBIDA:</td>
+                        <td class="text-end fs-6 text-primary">{{ soma_quantidade_produtos }}</td>
+                        <td class="text-end fs-6 text-primary">R$ {{ soma_valores | moeda }}</td>
+                        <td class="no-print"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Barra Inferior: Quantidade de Serviços e Não Identificados -->
+<div class="barra-inferior-diario d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex flex-wrap align-items-center gap-4">
+        <div>
+            <span class="text-muted small text-uppercase fw-semibold">Quantidade de Serviços:</span>
+            <span class="badge bg-primary fs-6 ms-1">{{ total_servicos_count }}</span>
+        </div>
+        <div>
+            <span class="text-muted small text-uppercase fw-semibold">Não Identificados:</span>
+            {% if total_nao_identificados > 0 %}
+                <a href="{{ url_for('lancamento_diario', modo='nao_identificados') }}" class="badge bg-danger fs-6 ms-1 text-decoration-none">
+                    <i class="fas fa-exclamation-circle me-1"></i> {{ total_nao_identificados }} não identificado(s)
+                </a>
+            {% else %}
+                <span class="badge bg-success fs-6 ms-1">0 (Todos identificados)</span>
+            {% endif %}
+        </div>
+        <div>
+            <span class="text-muted small text-uppercase fw-semibold">Total de Chapas:</span>
+            <span class="fw-bold ms-1">{{ soma_quantidade_produtos }} un.</span>
+        </div>
+    </div>
+    <div class="d-flex align-items-center gap-3">
+        <div>
+            <span class="text-muted small text-uppercase fw-semibold">Total em Valores:</span>
+            <span class="fw-bold text-primary fs-5 ms-1">R$ {{ soma_valores | moeda }}</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-dark no-print" onclick="window.print()">
+            <i class="fas fa-print me-1"></i> Imprimir
+        </button>
+    </div>
+</div>
+
+<!-- Modal de Exclusão -->
+<div class="modal fade" id="modalExcluirLancamento" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('excluir_lancamento_route') }}">
+                <input type="hidden" name="id" id="input_excluir_lanc_id">
+                <input type="hidden" name="servico_id" id="input_excluir_serv_id">
+                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Confirmar Exclusão</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    Tem certeza que deseja apagar este registro? O estoque das chapas associadas será estornado automaticamente e o arquivo não será reimportado pelo Hot Folder.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">Apagar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Virada de Mês / Transição de Fatura Anterior -->
+<div class="modal fade" id="modalViradaMes" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('virada_mes_route') }}">
+                <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fw-bold">
+                        <i class="fas fa-calendar-check me-2"></i> Virada de Mês — Transição de Fatura Anterior
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        <strong>Como funciona a transição automática:</strong><br>
+                        1. O sistema salva automaticamente uma cópia de segurança do banco atual na pasta <code>backups/</code>.<br>
+                        2. Calcula o saldo final de cada cliente até a data de fechamento (<code>Fatura Anterior + Serviços + Entregas - Pagamentos</code>) e grava esse valor no campo <strong>Fatura Anterior</strong> do cadastro de todos os clientes.<br>
+                        3. Limpa os lançamentos antigos (sem estornar o estoque de chapas já consumidas) e ajusta o Hot Folder para coletar apenas arquivos a partir do novo mês.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-5">
+                            <label class="form-label fw-bold">Data Final do Mês Anterior (Corte)</label>
+                            <input type="date" class="form-control" name="data_corte" value="2026-09-30" required>
+                            <div class="form-text">Ex: <code>30/09/2026</code> para fechar Setembro e iniciar Outubro (Mês 10).</div>
+                        </div>
+                        <div class="col-md-7">
+                            <label class="form-label fw-bold">O que manter no banco para o novo mês?</label>
+                            <select class="form-select" name="modo_limpeza">
+                                <option value="somente_hotfolder_mes_atual" selected>
+                                    Manter SOMENTE os arquivos coletados pelo Hot Folder neste mês (Recomendado)
+                                </option>
+                                <option value="manter_apos_corte">
+                                    Manter todos os lançamentos (Hot Folder e manuais) após a data de corte
+                                </option>
+                                <option value="limpar_tudo">
+                                    Limpar todos os lançamentos e começar o mês 100% zerado (só com Fatura Anterior)
+                                </option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger fw-bold">
+                        <i class="fas fa-check-circle me-1"></i> Executar Virada de Mês e Limpar Anteriores
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Simulador / Testador do Hot Folder (RIP CTP) -->
+<div class="modal fade" id="modalSimuladorHotFolder" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('simular_arquivos_hotfolder') }}">
+                <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold">
+                        <i class="fas fa-vial me-2"></i> Simulador de Arquivos RIP (Hot Folder)
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        Simule a chegada de arquivos convertidos pelo RIP (Raster Precision Screen) nas subpastas de chapas.
+                        O sistema identifica o cliente por similaridade (mesmo sem espaços ou com pequenos erros como <code>gilso</code>, <code>glison</code>),
+                        separa a descrição do serviço, conta a quantidade pelas cores (<code>C, M, Y, K, GRAY, PANTONE</code>) e vincula ao preço da chapa.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Subpasta da Chapa (Hot Folder)</label>
+                        <select class="form-select" name="pasta_chapa">
+                            <option value="510x400">Pasta 510x400 (Vinculada ao produto GTO - R$ 30,00)</option>
+                            <option value="660x530">Pasta 660x530 (Vinculada ao produto Adast - R$ 40,00)</option>
+                            <option value="650x550">Pasta 650x550 (Vinculada ao produto MO - R$ 40,00)</option>
+                            <option value="521">Pasta 521 (Vinculada ao produto 521 - R$ 30,00)</option>
+                            <option value="745x605">Pasta 745x605 (Vinculada ao produto Speed - R$ 50,00)</option>
+                            <option value="724">Pasta 724 (Vinculada ao produto 724 - R$ 50,00)</option>
+                            <option value="Solna">Pasta Solna (Vinculada ao produto Solna - R$ 40,00)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Nomes dos Arquivos (1 por linha ou separados por vírgula)</label>
+                        <textarea class="form-control font-monospace" name="nomes_arquivos" id="textarea_simulador" rows="6">gilson cartaz c
+gilson cartaz m
+gilson cartaz y
+gilson cartaz k</textarea>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="preencherExemploSimulador('gilson cartaz c\ngilson cartaz m\ngilson cartaz y\ngilson cartaz k')">
+                            Exemplo 1: Gilson Cartaz (CMYK)
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="preencherExemploSimulador('glisonfolhetoc.tif\nglsofolhetom.tif\ngilsonfolhetoy.tif\ngilsonfolhetok.tif')">
+                            Exemplo 2: Sem espaço + Erro de grafia (glison/gilso)
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="preencherExemploSimulador('nortegraficacatalogo_p1_C.tif\nnortegraficacatalogo_p1_M.tif\nnortegraficacatalogo_p2_C.tif\nnortegraficacatalogo_p2_M.tif')">
+                            Exemplo 3: Múltiplas Páginas (Norte Gráfica)
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                onclick="preencherExemploSimulador('graficaomega_cardapio_c.tif\ngraficaomega_cardapio_m.tif\ngraficaomega_cardapio_pantone185.tif')">
+                            Exemplo 4: Cliente Não Identificado (Destaque Vermelho)
+                        </button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-bolt me-1"></i> Processar Arquivos no Hot Folder
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% include "_modal_lancamento.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function confirmarExclusaoLancamento(id, servicoId) {
+        document.getElementById('input_excluir_lanc_id').value = id;
+        const inpServ = document.getElementById('input_excluir_serv_id');
+        if (inpServ) {
+            inpServ.value = servicoId || '';
+        }
+        new bootstrap.Modal(document.getElementById('modalExcluirLancamento')).show();
+    }
+
+    function preencherExemploSimulador(texto) {
+        document.getElementById('textarea_simulador').value = texto;
+    }
+
+    function aoMudarModoExibicao() {
+        const modo = document.getElementById('sel_modo_filtro').value;
+        const inputData = document.getElementById('input_data_diario');
+        if (modo !== 'diario') {
+            // Quando muda para Por Cliente / Produto / Não Identificados, limpa a data para mostrar todo o histórico se desejar
+            inputData.value = '';
+        } else if (!inputData.value) {
+            inputData.value = '{{ hoje_iso }}';
+        }
+        document.getElementById('formFiltroDiario').submit();
+    }
+</script>
+{% endblock %}

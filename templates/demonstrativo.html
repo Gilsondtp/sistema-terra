@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Demonstrativo Geral - {{ site_title }}{% endblock %}
+
+{% block content %}
+<!-- Filtros -->
+<div class="card mb-4 no-print">
+    <div class="card-header">
+        <h5 class="mb-0 fw-bold text-primary">
+            <i class="fas fa-chart-pie me-1"></i> Demonstrativo Financeiro Geral de Clientes
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('demonstrativo_page') }}">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Data Início</label>
+                    <input type="date" class="form-control" name="data_inicio" value="{{ data_inicio }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Data Fim</label>
+                    <input type="date" class="form-control" name="data_fim" value="{{ data_fim }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Filtrar por Produto (Chapa)</label>
+                    <select class="form-select" name="produto_id">
+                        <option value="">Todos os produtos</option>
+                        {% for p in produtos %}
+                            <option value="{{ p.id }}" {% if produto_id == (p.id|string) %}selected{% endif %}>{{ p.nome }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-filter me-1"></i> Gerar
+                    </button>
+                    <button type="button" onclick="window.print()" class="btn btn-outline-secondary" title="Imprimir">
+                        <i class="fas fa-print"></i>
+                    </button>
+                    <a href="{{ url_for('exportar_demonstrativo_excel', data_inicio=data_inicio, data_fim=data_fim, produto_id=produto_id) }}"
+                       class="btn btn-success" title="Exportar Excel">
+                        <i class="fas fa-file-excel"></i>
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<h4 class="fw-bold mb-3">
+    Demonstrativo Financeiro — {{ data_inicio | data_br }} a {{ data_fim | data_br }}
+</h4>
+
+<!-- Resumo por Cliente -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-bold">Resumo por Cliente</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Cliente</th>
+                        <th class="text-end">Serviços</th>
+                        <th class="text-end">Entregas</th>
+                        <th class="text-end">Pagamentos</th>
+                        <th class="text-end">Saldo do Período</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if dados_clientes %}
+                        {% for c in dados_clientes %}
+                            <tr>
+                                <td class="fw-semibold">{{ c.nome }}</td>
+                                <td class="text-end">R$ {{ c.servicos | moeda }}</td>
+                                <td class="text-end">R$ {{ c.entregas | moeda }}</td>
+                                <td class="text-end text-success">R$ {{ c.pagamentos | moeda }}</td>
+                                <td class="text-end fw-bold {% if c.saldo > 0 %}text-danger{% endif %}">R$ {{ c.saldo | moeda }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="5" class="text-center py-3 text-muted">Nenhum registro encontrado para o filtro.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+                <tfoot class="table-secondary fw-bold">
+                    <tr>
+                        <th>TOTAL</th>
+                        <th class="text-end">R$ {{ totais_gerais.servicos | moeda }}</th>
+                        <th class="text-end">R$ {{ totais_gerais.entregas | moeda }}</th>
+                        <th class="text-end">R$ {{ totais_gerais.pagamentos | moeda }}</th>
+                        <th class="text-end text-primary">R$ {{ totais_gerais.saldo | moeda }}</th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Produtos Utilizados no Período -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-bold">Produtos (Chapas) Utilizados no Período</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Produto (Chapa)</th>
+                        <th class="text-end">Quantidade</th>
+                        <th class="text-end">Valor Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if produtos_utilizados %}
+                        {% for pnome, pdados in produtos_utilizados %}
+                            <tr>
+                                <td class="fw-semibold">{{ pnome }}</td>
+                                <td class="text-end">{{ pdados.quantidade }}</td>
+                                <td class="text-end">R$ {{ pdados.valor_total | moeda }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="3" class="text-center py-3 text-muted">Nenhum produto utilizado no período selecionado.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Alerta de Estoque Crítico -->
+{% if estoque_critico %}
+    <div class="card border-danger mb-4">
+        <div class="card-header bg-danger text-white">
+            <h6 class="mb-0 fw-bold"><i class="fas fa-triangle-exclamation me-1"></i> Alerta de Estoque Crítico / Baixo</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Produto</th>
+                            <th class="text-end">Estoque Inicial</th>
+                            <th class="text-end">Consumo Real</th>
+                            <th class="text-end">Estoque Atual</th>
+                            <th class="text-end">% Disponível</th>
+                            <th class="text-center">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in estoque_critico %}
+                            <tr class="{% if item.percentual <= 10 %}table-danger{% else %}table-warning{% endif %}">
+                                <td class="fw-bold">{{ item.nome }}</td>
+                                <td class="text-end">{{ item.estoque_inicial }}</td>
+                                <td class="text-end">{{ item.consumo_real }}</td>
+                                <td class="text-end fw-bold">{{ item.estoque_atual }}</td>
+                                <td class="text-end">{{ item.percentual }}%</td>
+                                <td class="text-center fw-bold">{{ item.status }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+{% endif %}
+
+<!-- Botões Inferiores -->
+<div class="d-flex gap-2 no-print">
+    <button type="button" onclick="window.print()" class="btn btn-primary">
+        <i class="fas fa-print me-1"></i> Imprimir
+    </button>
+    <a href="{{ url_for('exportar_demonstrativo_excel', data_inicio=data_inicio, data_fim=data_fim, produto_id=produto_id) }}"
+       class="btn btn-success">
+        <i class="fas fa-file-excel me-1"></i> Exportar Excel (.xlsx)
+    </a>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <rect width="120" height="120" fill="#ffffff" stroke="#dee2e6" stroke-width="2" rx="6"/>
+  <!-- Corner Finder Patterns -->
+  <rect x="10" y="10" width="30" height="30" fill="none" stroke="#000" stroke-width="5"/>
+  <rect x="18" y="18" width="14" height="14" fill="#000"/>
+  <rect x="80" y="10" width="30" height="30" fill="none" stroke="#000" stroke-width="5"/>
+  <rect x="88" y="18" width="14" height="14" fill="#000"/>
+  <rect x="10" y="80" width="30" height="30" fill="none" stroke="#000" stroke-width="5"/>
+  <rect x="18" y="88" width="14" height="14" fill="#000"/>
+  <!-- Data Matrix Modules -->
+  <rect x="50" y="12" width="6" height="6" fill="#000"/>
+  <rect x="62" y="12" width="6" height="12" fill="#000"/>
+  <rect x="50" y="26" width="12" height="6" fill="#000"/>
+  <rect x="48" y="44" width="24" height="24" rx="4" fill="#32bcad"/>
+  <text x="60" y="60" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#fff">PIX</text>
+  <rect x="14" y="48" width="12" height="6" fill="#000"/>
+  <rect x="32" y="54" width="6" height="14" fill="#000"/>
+  <rect x="14" y="62" width="10" height="10" fill="#000"/>
+  <rect x="80" y="48" width="14" height="6" fill="#000"/>
+  <rect x="98" y="54" width="10" height="12" fill="#000"/>
+  <rect x="82" y="64" width="8" height="8" fill="#000"/>
+  <rect x="48" y="78" width="10" height="10" fill="#000"/>
+  <rect x="64" y="82" width="12" height="6" fill="#000"/>
+  <rect x="82" y="80" width="12" height="12" fill="#000"/>
+  <rect x="98" y="86" width="10" height="18" fill="#000"/>
+  <rect x="52" y="96" width="20" height="10" fill="#000"/>
+  <rect x="78" y="98" width="14" height="10" fill="#000"/>
+</svg>

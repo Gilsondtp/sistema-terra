@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Clientes - {{ site_title }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h5 class="mb-0 fw-bold text-primary">
+            <i class="fas fa-users me-1"></i> Cadastro de Clientes ({{ clientes|length }})
+        </h5>
+        <div class="d-flex gap-2">
+            <input type="text" id="buscaRapidaCliente" class="form-control form-control-sm" style="width: 240px;"
+                   placeholder="Buscar por nome, endereço ou cidade..." oninput="filtrarTabelaClientes()">
+            <button type="button" class="btn btn-primary btn-sm px-3" onclick="abrirModalNovoCliente()">
+                <i class="fas fa-plus me-1"></i> Novo Cliente
+            </button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle mb-0" id="tabelaClientes">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 65px;" class="text-center">ID</th>
+                        <th>Nome</th>
+                        <th>Apelidos / Prefixos Hot Folder</th>
+                        <th>Telefone</th>
+                        <th>Endereço</th>
+                        <th>Cidade</th>
+                        <th class="text-end">Fatura Anterior (R$)</th>
+                        <th style="width: 120px;" class="text-center no-print">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in clientes %}
+                        <tr class="linha-cliente">
+                            <td class="text-center text-muted">{{ c.id }}</td>
+                            <td class="fw-semibold">{{ c.nome }}</td>
+                            <td>
+                                {% if c.apelidos %}
+                                    <span class="badge bg-light text-dark border">{{ c.apelidos }}</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ c.telefone or '-' }}</td>
+                            <td>
+                                {% if c.rua_bairro and c.rua_bairro.startswith('http') %}
+                                    <a href="{{ c.rua_bairro }}" target="_blank" class="small text-decoration-none">
+                                        <i class="fas fa-map-location-dot me-1"></i> Ver Mapa
+                                    </a>
+                                {% else %}
+                                    {{ c.rua_bairro or '-' }}
+                                {% endif %}
+                            </td>
+                            <td>{{ c.cidade or '-' }}</td>
+                            <td class="text-end fw-semibold {% if (c.fatura_anterior or 0) > 0 %}text-danger{% endif %}">
+                                R$ {{ (c.fatura_anterior or 0) | moeda }}
+                            </td>
+                            <td class="text-center no-print">
+                                <button type="button" class="btn btn-sm btn-warning"
+                                        onclick='editarClienteModal({{ c | tojson }})'
+                                        title="Editar Cliente">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-danger"
+                                        onclick="confirmarExclusaoCliente({{ c.id }})"
+                                        title="Excluir Cliente">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Criar / Editar Cliente -->
+<div class="modal fade" id="clienteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formCliente" method="POST" action="{{ url_for('clientes_page') }}">
+                <input type="hidden" name="acao" id="cli_acao" value="criar">
+                <input type="hidden" name="id" id="cli_id" value="">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold" id="clienteModalTitulo">Novo Cliente</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nome do Cliente *</label>
+                        <input type="text" class="form-control" id="cli_nome" name="nome" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Apelidos / Abreviações no Hot Folder (Opcional)</label>
+                        <input type="text" class="form-control" id="cli_apelidos" name="apelidos" placeholder="Ex: nortegrafica, norte (separados por vírgula)">
+                        <div class="form-text small">Auxilia na identificação automática de arquivos vindos do RIP.</div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Telefone</label>
+                            <input type="text" class="form-control" id="cli_telefone" name="telefone" placeholder="(71) 99999-9999">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Cidade</label>
+                            <input type="text" class="form-control" id="cli_cidade" name="cidade" placeholder="Ex: Salvador">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Endereço / Bairro / Link Maps</label>
+                        <input type="text" class="form-control" id="cli_rua_bairro" name="rua_bairro">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Saldo Fatura Anterior (R$)</label>
+                        <div class="input-group">
+                            <span class="input-group-text">R$</span>
+                            <input type="text" class="form-control" id="cli_fatura_anterior" name="fatura_anterior" value="0,00">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Exclusão Cliente -->
+<div class="modal fade" id="excluirClienteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('clientes_page') }}">
+                <input type="hidden" name="acao" value="excluir">
+                <input type="hidden" name="id" id="excluir_cli_id">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirmar Exclusão</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    Tem certeza que deseja excluir este cliente?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">Excluir</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function abrirModalNovoCliente() {
+        document.getElementById('formCliente').reset();
+        document.getElementById('cli_acao').value = 'criar';
+        document.getElementById('cli_id').value = '';
+        document.getElementById('cli_fatura_anterior').value = '0,00';
+        document.getElementById('clienteModalTitulo').textContent = 'Novo Cliente';
+        new bootstrap.Modal(document.getElementById('clienteModal')).show();
+    }
+
+    function editarClienteModal(c) {
+        document.getElementById('cli_acao').value = 'atualizar';
+        document.getElementById('cli_id').value = c.id;
+        document.getElementById('cli_nome').value = c.nome || '';
+        document.getElementById('cli_apelidos').value = c.apelidos || '';
+        document.getElementById('cli_telefone').value = c.telefone || '';
+        document.getElementById('cli_rua_bairro').value = c.rua_bairro || '';
+        document.getElementById('cli_cidade').value = c.cidade || '';
+        document.getElementById('cli_fatura_anterior').value = formatarMoedaBR(c.fatura_anterior || 0);
+        document.getElementById('clienteModalTitulo').textContent = 'Editar Cliente';
+        new bootstrap.Modal(document.getElementById('clienteModal')).show();
+    }
+
+    function confirmarExclusaoCliente(id) {
+        document.getElementById('excluir_cli_id').value = id;
+        new bootstrap.Modal(document.getElementById('excluirClienteModal')).show();
+    }
+
+    function filtrarTabelaClientes() {
+        const termo = document.getElementById('buscaRapidaCliente').value.toLowerCase();
+        document.querySelectorAll('#tabelaClientes tbody tr.linha-cliente').forEach(tr => {
+            tr.style.display = tr.textContent.toLowerCase().includes(termo) ? '' : 'none';
+        });
+    }
+</script>
+{% endblock %}

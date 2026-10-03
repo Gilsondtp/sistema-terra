@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Fatura / Relatório Individual - {{ site_title }}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .header-fatura {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    .header-fatura img {
+        max-width: 170px;
+        height: auto;
+    }
+    .header-fatura-text {
+        font-size: 12px;
+        line-height: 1.35;
+        margin: 0;
+    }
+    .client-name-fatura {
+        font-size: 1.35rem;
+        font-weight: 800;
+        color: #084298;
+    }
+    .footer-pix {
+        margin-top: 28px;
+        padding-top: 12px;
+        border-top: 1px solid #dee2e6;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+    .footer-pix img {
+        max-width: 68px;
+        height: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Filtros (Ocultos na impressão) -->
+<div class="card mb-4 no-print">
+    <div class="card-header">
+        <h5 class="mb-0 fw-bold text-primary">
+            <i class="fas fa-file-invoice-dollar me-1"></i> Emissão de Relatório Individual (Fatura)
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('relatorios_page') }}">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Cliente *</label>
+                    <select class="form-select" name="cliente_id" required onchange="this.form.submit()">
+                        <option value="">Selecione um cliente</option>
+                        {% for c in clientes %}
+                            <option value="{{ c.id }}" {% if cliente_id == (c.id|string) %}selected{% endif %}>{{ c.nome }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Data Início</label>
+                    <input type="date" class="form-control" name="data_inicio" value="{{ data_inicio }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Data Fim</label>
+                    <input type="date" class="form-control" name="data_fim" value="{{ data_fim }}">
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search me-1"></i> Gerar Fatura
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if cliente_atual %}
+    <div class="card p-4 print-content">
+        <!-- Cabeçalho da Fatura -->
+        <div class="header-fatura">
+            <img src="{{ url_for('static', filename='img/cabecario.jpg') }}" alt="Cabeçalho Terra Fotolito">
+            <p class="header-fatura-text">
+                {{ cfg.get('empresa_endereco', 'Campinas de Pirajá, nº 24 - Pirajá - Salvador - Ba.') }}<br>
+                Tel / Whts: {{ cfg.get('empresa_telefone', '71 3242-6120') }}<br>
+                Email: {{ cfg.get('empresa_email', 'terrafotolitos@hotmail.com') }}
+            </p>
+        </div>
+
+        <h2 class="fw-bold mb-3">FATURA</h2>
+
+        <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
+            <div>
+                <strong>Cliente:</strong> <span class="client-name-fatura">{{ cliente_atual.nome }}</span>
+            </div>
+            <div>
+                {% if primeira_data and ultima_data %}
+                    <span>Período de <strong>{{ primeira_data | data_br }}</strong> a <strong>{{ ultima_data | data_br }}</strong></span>
+                {% else %}
+                    <span>Data de Emissão: <strong>{{ hoje_br }}</strong></span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Tabela de Serviços da Fatura -->
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 55px;" class="text-center">Itens</th>
+                        <th style="width: 75px;" class="text-center">Data</th>
+                        <th>Serviços</th>
+                        <th style="width: 80px;" class="text-center">Quant.</th>
+                        <th style="width: 120px;">Produto</th>
+                        <th style="width: 120px;" class="text-end">Valor</th>
+                        <th style="width: 120px;" class="text-end">Entreg.</th>
+                        <th style="width: 120px;" class="text-end">Pgtº</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set ns = namespace(os=1) %}
+                    {% if lancamentos %}
+                        {% for l in lancamentos %}
+                            {% if l.servicos or l.valor_entrega > 0 or l.valor_pagamento > 0 %}
+                                {% if not l.servicos %}
+                                    <tr>
+                                        <td class="text-center">{{ ns.os }}</td>
+                                        {% set ns.os = ns.os + 1 %}
+                                        <td class="text-center">{{ l.data_lancamento | data_curta }}</td>
+                                        <td>{{ l.observacao or '-' }}</td>
+                                        <td class="text-center">-</td>
+                                        <td>-</td>
+                                        <td class="text-end">R$ 0,00</td>
+                                        <td class="text-end">R$ {{ l.valor_entrega | moeda }}</td>
+                                        <td class="text-end">R$ {{ l.valor_pagamento | moeda }}</td>
+                                    </tr>
+                                {% else %}
+                                    {% for s in l.servicos %}
+                                        <tr>
+                                            <td class="text-center">{{ ns.os }}</td>
+                                            {% set ns.os = ns.os + 1 %}
+                                            <td class="text-center">{{ l.data_lancamento | data_curta }}</td>
+                                            <td>{{ s.descricao }}</td>
+                                            <td class="text-center">{{ s.quantidade }}</td>
+                                            <td>{{ s.produto_nome or '' }}</td>
+                                            <td class="text-end">R$ {{ s.valor | moeda }}</td>
+                                            <td class="text-end">{% if loop.first %}R$ {{ l.valor_entrega | moeda }}{% endif %}</td>
+                                            <td class="text-end">{% if loop.first %}R$ {{ l.valor_pagamento | moeda }}{% endif %}</td>
+                                        </tr>
+                                    {% endfor %}
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-3">
+                                Nenhum lançamento no período selecionado para este cliente.
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+                <tfoot class="table-secondary fw-bold">
+                    <tr>
+                        <th colspan="3" class="text-end">Totais:</th>
+                        <th class="text-center">{{ totais.quantidade }}</th>
+                        <th></th>
+                        <th class="text-end">R$ {{ totais.servicos | moeda }}</th>
+                        <th class="text-end">R$ {{ totais.entrega | moeda }}</th>
+                        <th class="text-end">R$ {{ totais.pagamento | moeda }}</th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <!-- Seção com Fatura Anterior, Observações e Resumo de Saldo Devedor -->
+        <div class="row mt-3 g-3">
+            <div class="col-md-6">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label fw-semibold small mb-1">Fatura Anterior R$</label>
+                        <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.fatura_anterior | moeda }}" readonly>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label fw-semibold small mb-1">Pagtº R$</label>
+                        <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.pagamento_fatura_anterior | moeda }}" readonly>
+                    </div>
+                </div>
+                <div class="p-2 bg-light border rounded" style="min-height: 75px;">
+                    <strong class="small">Observações:</strong><br>
+                    {% if observacoes_relatorio %}
+                        <span class="small">{{ observacoes_relatorio | join(' | ') }}</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <table class="table table-bordered mb-0">
+                    <tr>
+                        <th style="width: 60%;">Total Serviços:</th>
+                        <td class="text-end">R$ {{ totais.servicos | moeda }}</td>
+                    </tr>
+                    {% if totais.entrega > 0 %}
+                    <tr>
+                        <th>Total Entrega:</th>
+                        <td class="text-end">R$ {{ totais.entrega | moeda }}</td>
+                    </tr>
+                    {% endif %}
+                    <tr>
+                        <th>Total da Fatura:</th>
+                        <td class="text-end fw-semibold">R$ {{ totais.total_fatura | moeda }}</td>
+                    </tr>
+                    <tr>
+                        <th>Total Pago:</th>
+                        <td class="text-end text-success fw-semibold">R$ {{ totais.total_pago | moeda }}</td>
+                    </tr>
+                    <tr>
+                        <th>Saldo da Fatura Anterior:</th>
+                        <td class="text-end">R$ {{ totais.saldo_fatura_anterior | moeda }}</td>
+                    </tr>
+                    <tr class="table-warning">
+                        <th class="fs-6"><strong>SALDO DEVEDOR:</strong></th>
+                        <td class="text-end fs-6"><strong>R$ {{ totais.saldo_devedor | moeda }}</strong></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- Relatório de Produtos Utilizados pelo Cliente no Período -->
+        {% if produtos_utilizados %}
+            <div class="mt-4">
+                <h6 class="fw-bold">Relatório de Produtos (Chapas) Utilizados no Período</h6>
+                <div class="table-responsive" style="max-width: 460px;">
+                    <table class="table table-sm table-bordered mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Produto (Chapa)</th>
+                                <th class="text-end">Quantidade Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pnome, pqtd in produtos_utilizados %}
+                                <tr>
+                                    <td>{{ pnome }}</td>
+                                    <td class="text-end fw-semibold">{{ pqtd }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- Rodapé com PIX -->
+        <div class="footer-pix">
+            <img src="{{ url_for('static', filename='img/qrcode_pix.svg') }}" alt="QR Code PIX">
+            <div>
+                <p class="mb-0 fw-bold">PIX: {{ cfg.get('empresa_pix', '71 98221-8592 - Erilio Texerira L. Filho') }}</p>
+                <small class="text-muted">Agradecemos a preferência!</small>
+            </div>
+        </div>
+
+        <!-- Botões de Ação (Imprimir e Fechar Fatura) -->
+        <div class="mt-4 d-flex gap-2 no-print">
+            <button type="button" onclick="window.print()" class="btn btn-primary px-4">
+                <i class="fas fa-print me-1"></i> Imprimir Fatura
+            </button>
+
+            {% if lancamentos %}
+                <form method="POST" action="{{ url_for('relatorios_page') }}"
+                      onsubmit="return confirm('Tem certeza que deseja FECHAR A FATURA exibida?\n\n- Os lançamentos e serviços do período serão limpos do banco (mantendo o consumo do estoque);\n- O Saldo Devedor de R$ {{ totais.saldo_devedor | moeda }} será transferido para o campo Fatura Anterior do próximo mês.');">
+                    <input type="hidden" name="fechar_fatura" value="1">
+                    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+                    <input type="hidden" name="data_inicio" value="{{ data_inicio }}">
+                    <input type="hidden" name="data_fim" value="{{ data_fim }}">
+                    <button type="submit" class="btn btn-danger px-4">
+                        <i class="fas fa-check-double me-1"></i> Fechar Fatura
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+{% endif %}
+{% endblock %}

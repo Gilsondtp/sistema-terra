@@ -1,0 +1,280 @@
+<!-- Modal Pop-up de Lançamento (Criar / Editar conforme sistema original) -->
+<div class="modal fade" id="modalLancamento" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="formModalLancamento" method="POST" action="{{ url_for('salvar_lancamento') }}">
+                <input type="hidden" name="acao" id="modal_lanc_acao" value="criar">
+                <input type="hidden" name="id" id="modal_lanc_id" value="">
+                <input type="hidden" name="cliente_nome_original" id="modal_lanc_cli_orig" value="">
+                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold" id="modalLancamentoTitulo">
+                        <i class="fas fa-file-signature me-2"></i> Novo Lançamento
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-7">
+                            <label class="form-label fw-semibold">Cliente Cadastrado</label>
+                            <select class="form-select" id="modal_cliente_id" name="cliente_id" onchange="aoSelecionarClienteModal()">
+                                <option value="">-- Não Identificado / Selecionar Cliente --</option>
+                                {% for c in clientes %}
+                                    <option value="{{ c.id }}" data-fatura="{{ c.fatura_anterior or 0 }}">{{ c.nome }}</option>
+                                {% endfor %}
+                            </select>
+                            <div id="aviso_nao_identificado" class="form-text text-danger fw-bold d-none">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                Nome detectado no arquivo: <span id="span_nome_detectado"></span> — Selecione um cliente acima para identificá-lo.
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label fw-semibold">Data do Lançamento</label>
+                            <input type="date" class="form-control" id="modal_data_lancamento" name="data_lancamento" value="{{ hoje_iso }}" required>
+                        </div>
+                    </div>
+
+                    <!-- Área de Serviços -->
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label fw-bold mb-0 text-primary">
+                            <i class="fas fa-layer-group me-1"></i> Serviços e Chapas (Produtos)
+                        </label>
+                        <button type="button" class="btn btn-sm btn-success" onclick="adicionarLinhaServicoModal()">
+                            <i class="fas fa-plus me-1"></i> Adicionar Serviço
+                        </button>
+                    </div>
+
+                    <div id="modal_servicos_container" class="mb-3">
+                        <!-- Linhas de serviços inseridas via JS -->
+                    </div>
+
+                    <hr>
+
+                    <!-- Entrega e Pagamento/Desconto -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Valor de Entrega</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control" id="modal_valor_entrega" name="valor_entrega" value="0,00">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Pagamento / Desconto (Valor Recebido)</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control" id="modal_valor_pagamento" name="valor_pagamento" value="0,00">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fatura Anterior, Pagtº Fatura Anterior e Saldo Fatura Anterior -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Fatura Anterior R$</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control" id="modal_fatura_anterior" name="fatura_anterior" value="0,00" oninput="recalcularSaldoFaturaModal()">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Pagtº (Débito Fatura Anterior) R$</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control" id="modal_pagamento_fatura_anterior" name="pagamento_fatura_anterior" value="0,00" oninput="recalcularSaldoFaturaModal()">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Saldo da Fatura Anterior R$</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control bg-light fw-bold" id="modal_saldo_fatura_anterior" name="saldo_fatura_anterior" value="0,00" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Observação -->
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Observação</label>
+                        <input type="text" class="form-control" id="modal_observacao" name="observacao" placeholder="Digite uma observação opcional para este lançamento">
+                    </div>
+                </div>
+
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary px-4">
+                        <i class="fas fa-save me-1"></i> Salvar Lançamento
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    const CATALOGO_PRODUTOS = {{ produtos | tojson }};
+    const CATALOGO_CLIENTES = {{ clientes | tojson }};
+    let contadorServicosModal = 0;
+
+    function recalcularSaldoFaturaModal() {
+        const fatAnt = lerMoedaBR(document.getElementById('modal_fatura_anterior').value);
+        const pgtoAnt = lerMoedaBR(document.getElementById('modal_pagamento_fatura_anterior').value);
+        const saldo = fatAnt - pgtoAnt;
+        document.getElementById('modal_saldo_fatura_anterior').value = formatarMoedaBR(saldo);
+    }
+
+    function aoSelecionarClienteModal() {
+        const sel = document.getElementById('modal_cliente_id');
+        const cid = sel.value;
+        if (cid) {
+            const cli = CATALOGO_CLIENTES.find(c => String(c.id) === String(cid));
+            if (cli && document.getElementById('modal_lanc_acao').value === 'criar') {
+                document.getElementById('modal_fatura_anterior').value = formatarMoedaBR(cli.fatura_anterior || 0);
+                document.getElementById('modal_pagamento_fatura_anterior').value = '0,00';
+                recalcularSaldoFaturaModal();
+            }
+            document.getElementById('aviso_nao_identificado').classList.add('d-none');
+        }
+    }
+
+    function adicionarLinhaServicoModal(dados = null) {
+        contadorServicosModal++;
+        const idx = contadorServicosModal;
+        const desc = dados ? (dados.descricao || '') : '';
+        const qtd = dados && dados.quantidade !== undefined ? dados.quantidade : 1;
+        const prodId = dados && dados.produto_id ? String(dados.produto_id) : '';
+        const valor = dados && dados.valor !== undefined ? formatarMoedaBR(dados.valor) : '0,00';
+        const cores = dados ? (dados.cores_detectadas || '') : '';
+        const pasta = dados ? (dados.pasta_origem || '') : '';
+        const manualFlag = dados ? 'true' : 'false';
+
+        let opcoesProd = `<option value="" data-preco="0">Sem produto (valor manual)</option>`;
+        CATALOGO_PRODUTOS.forEach(p => {
+            const selected = String(p.id) === prodId ? 'selected' : '';
+            opcoesProd += `<option value="${p.id}" data-preco="${p.preco}" ${selected}>${p.nome} - R$ ${formatarMoedaBR(p.preco)}</option>`;
+        });
+
+        const div = document.createElement('div');
+        div.className = 'servico-item-box';
+        div.id = `modal_servico_row_${idx}`;
+        div.innerHTML = `
+            <input type="hidden" name="servico_cores[]" value="${cores}">
+            <input type="hidden" name="servico_pasta[]" value="${pasta}">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label small mb-1 fw-semibold">Descrição do Serviço</label>
+                    <input type="text" class="form-control form-control-sm" name="servico_descricao[]" value="${desc.replace(/"/g, '&quot;')}" placeholder="Ex: Cartaz, Folder, Panfleto...">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1 fw-semibold">Quantidade</label>
+                    <input type="number" class="form-control form-control-sm" id="modal_serv_qtd_${idx}" name="servico_quantidade[]" value="${qtd}" min="0" oninput="recalcularLinhaServicoModal(${idx})">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1 fw-semibold">Produto / Chapa (Opcional)</label>
+                    <select class="form-select form-select-sm" id="modal_serv_prod_${idx}" name="servico_produto[]" onchange="aoTrocarProdutoModal(${idx})">
+                        ${opcoesProd}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1 fw-semibold">Valor (R$)</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">R$</span>
+                        <input type="text" class="form-control" id="modal_serv_val_${idx}" name="servico_valor[]" value="${valor}" data-manual="${manualFlag}" oninput="this.dataset.manual='true'">
+                    </div>
+                </div>
+                <div class="col-md-1 text-end">
+                    <button type="button" class="btn btn-sm btn-outline-danger w-100" onclick="removerLinhaServicoModal(${idx})" title="Remover Serviço">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+        document.getElementById('modal_servicos_container').appendChild(div);
+    }
+
+    function removerLinhaServicoModal(idx) {
+        const el = document.getElementById(`modal_servico_row_${idx}`);
+        if (el) el.remove();
+    }
+
+    function aoTrocarProdutoModal(idx) {
+        const valInput = document.getElementById(`modal_serv_val_${idx}`);
+        if (valInput) valInput.dataset.manual = 'false';
+        recalcularLinhaServicoModal(idx);
+    }
+
+    function recalcularLinhaServicoModal(idx) {
+        const sel = document.getElementById(`modal_serv_prod_${idx}`);
+        const qtdInput = document.getElementById(`modal_serv_qtd_${idx}`);
+        const valInput = document.getElementById(`modal_serv_val_${idx}`);
+        if (!sel || !qtdInput || !valInput) return;
+
+        if (sel.value) {
+            const opt = sel.options[sel.selectedIndex];
+            const preco = parseFloat(opt.getAttribute('data-preco') || '0');
+            const qtd = parseInt(qtdInput.value || '0', 10);
+            if (valInput.dataset.manual !== 'true') {
+                valInput.value = formatarMoedaBR(preco * qtd);
+            }
+        }
+    }
+
+    function abrirModalNovoLancamento() {
+        document.getElementById('formModalLancamento').reset();
+        document.getElementById('modal_lanc_acao').value = 'criar';
+        document.getElementById('modal_lanc_id').value = '';
+        document.getElementById('modal_lanc_cli_orig').value = '';
+        document.getElementById('modalLancamentoTitulo').innerHTML = '<i class="fas fa-plus-circle me-2"></i> Novo Lançamento';
+        document.getElementById('modal_data_lancamento').value = '{{ hoje_iso }}';
+        document.getElementById('modal_valor_entrega').value = '0,00';
+        document.getElementById('modal_valor_pagamento').value = '0,00';
+        document.getElementById('modal_fatura_anterior').value = '0,00';
+        document.getElementById('modal_pagamento_fatura_anterior').value = '0,00';
+        document.getElementById('modal_saldo_fatura_anterior').value = '0,00';
+        document.getElementById('modal_observacao').value = '';
+        document.getElementById('aviso_nao_identificado').classList.add('d-none');
+
+        const container = document.getElementById('modal_servicos_container');
+        container.innerHTML = '';
+        contadorServicosModal = 0;
+        adicionarLinhaServicoModal();
+
+        new bootstrap.Modal(document.getElementById('modalLancamento')).show();
+    }
+
+    function abrirModalEditarLancamento(lancamento) {
+        document.getElementById('modal_lanc_acao').value = 'atualizar';
+        document.getElementById('modal_lanc_id').value = lancamento.id;
+        document.getElementById('modal_lanc_cli_orig').value = lancamento.cliente_nome_original || '';
+        document.getElementById('modalLancamentoTitulo').innerHTML = `<i class="fas fa-edit me-2"></i> Editar Lançamento #${lancamento.id}`;
+
+        document.getElementById('modal_cliente_id').value = lancamento.cliente_id || '';
+        if (!lancamento.cliente_id && lancamento.cliente_nome_original) {
+            document.getElementById('span_nome_detectado').textContent = lancamento.cliente_nome_original;
+            document.getElementById('aviso_nao_identificado').classList.remove('d-none');
+        } else {
+            document.getElementById('aviso_nao_identificado').classList.add('d-none');
+        }
+
+        document.getElementById('modal_data_lancamento').value = (lancamento.data_lancamento || '').substring(0, 10);
+        document.getElementById('modal_valor_entrega').value = formatarMoedaBR(lancamento.valor_entrega || 0);
+        document.getElementById('modal_valor_pagamento').value = formatarMoedaBR(lancamento.valor_pagamento || 0);
+        document.getElementById('modal_fatura_anterior').value = formatarMoedaBR(lancamento.fatura_anterior || 0);
+        document.getElementById('modal_pagamento_fatura_anterior').value = formatarMoedaBR(lancamento.pagamento_fatura_anterior || 0);
+        document.getElementById('modal_saldo_fatura_anterior').value = formatarMoedaBR(lancamento.saldo_fatura_anterior || 0);
+        document.getElementById('modal_observacao').value = lancamento.observacao || '';
+
+        const container = document.getElementById('modal_servicos_container');
+        container.innerHTML = '';
+        contadorServicosModal = 0;
+        if (lancamento.servicos && lancamento.servicos.length > 0) {
+            lancamento.servicos.forEach(s => adicionarLinhaServicoModal(s));
+        } else {
+            adicionarLinhaServicoModal();
+        }
+
+        new bootstrap.Modal(document.getElementById('modalLancamento')).show();
+    }
+</script>

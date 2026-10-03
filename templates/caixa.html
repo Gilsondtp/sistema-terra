@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% block title %}Caixa e Financeiro Integrado - {{ site_title }}{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho de Impressão -->
+<div class="d-none d-print-block mb-3 border-bottom pb-2">
+    <h4 class="mb-0 fw-bold">TERRA FOTOLITO — Relatório de Caixa e Saldos de Clientes</h4>
+    <small>Emitido em: {{ hoje_br }}</small>
+</div>
+
+<!-- Cards de Resumo Integrado (Saldos de Clientes + Fluxo de Caixa) -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-danger h-100">
+            <div class="card-body py-2 px-3">
+                <div class="text-muted small text-uppercase fw-semibold">Saldo Devedor dos Clientes</div>
+                <div class="fs-4 fw-bold text-danger">R$ {{ resumo_caixa.saldo_devedor_clientes | moeda }}</div>
+                <div class="small text-muted">Serviços + Faturas Anteriores em aberto</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-success h-100">
+            <div class="card-body py-2 px-3">
+                <div class="text-muted small text-uppercase fw-semibold">Pagamentos de Clientes</div>
+                <div class="fs-4 fw-bold text-success">R$ {{ resumo_caixa.pagamentos_clientes | moeda }}</div>
+                <div class="small text-muted">Recebidos nos lançamentos</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-warning h-100">
+            <div class="card-body py-2 px-3">
+                <div class="text-muted small text-uppercase fw-semibold">Despesas / Pagos (Caixa)</div>
+                <div class="fs-4 fw-bold text-warning-emphasis">R$ {{ (resumo_caixa.despesa + resumo_caixa.pago) | moeda }}</div>
+                <div class="small text-muted">Transferidos: R$ {{ resumo_caixa.transferido | moeda }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-primary h-100">
+            <div class="card-body py-2 px-3">
+                <div class="text-muted small text-uppercase fw-semibold">Saldo Líquido do Caixa</div>
+                <div class="fs-4 fw-bold text-primary">R$ {{ resumo_caixa.saldo_liquido_caixa | moeda }}</div>
+                <div class="small text-muted">Receitas (R$ {{ (resumo_caixa.receita + resumo_caixa.recebido) | moeda }}) - Despesas</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Barra de Filtro de Período e Botões -->
+<div class="card mb-4 no-print">
+    <div class="card-body py-3">
+        <form method="GET" action="{{ url_for('caixa_page') }}">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold mb-1">Data Início</label>
+                    <input type="date" class="form-control form-control-sm" name="data_inicio" value="{{ data_inicio }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold mb-1">Data Fim</label>
+                    <input type="date" class="form-control form-control-sm" name="data_fim" value="{{ data_fim }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold mb-1">Operação do Caixa</label>
+                    <select class="form-select form-select-sm" name="operacao">
+                        <option value="">Todas as operações</option>
+                        <option value="receita" {% if operacao_filtro == 'receita' %}selected{% endif %}>Receita</option>
+                        <option value="recebido" {% if operacao_filtro == 'recebido' %}selected{% endif %}>Recebido (Pagamentos)</option>
+                        <option value="despesa" {% if operacao_filtro == 'despesa' %}selected{% endif %}>Despesa</option>
+                        <option value="pago" {% if operacao_filtro == 'pago' %}selected{% endif %}>Pago</option>
+                        <option value="a_receber" {% if operacao_filtro == 'a_receber' %}selected{% endif %}>A Receber</option>
+                        <option value="transferido" {% if operacao_filtro == 'transferido' %}selected{% endif %}>Transferido</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm w-100">
+                        <i class="fas fa-filter me-1"></i> Filtrar
+                    </button>
+                    <a href="{{ url_for('caixa_page') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+                    <button type="button" onclick="window.print()" class="btn btn-secondary btn-sm">
+                        <i class="fas fa-print"></i>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Coluna Esquerda: Saldos Devedores e Pagamentos dos Clientes -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-bold text-primary">
+                    <i class="fas fa-users-viewfinder me-1"></i> Saldos Devedores e Pagamentos de Clientes
+                </h6>
+                <span class="badge bg-primary">Banco Integrado</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 540px;">
+                    <table class="table table-sm table-striped table-bordered align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Cliente</th>
+                                <th class="text-end">Fat. Ant.</th>
+                                <th class="text-end">Serviços/Ent.</th>
+                                <th class="text-end">Pagamentos</th>
+                                <th class="text-end">Saldo Devedor</th>
+                                <th class="text-center no-print">Fatura</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sc in saldos_clientes %}
+                                <tr>
+                                    <td class="fw-semibold">{{ sc.nome }}</td>
+                                    <td class="text-end">R$ {{ sc.fatura_anterior | moeda }}</td>
+                                    <td class="text-end">R$ {{ (sc.servicos + sc.entregas) | moeda }}</td>
+                                    <td class="text-end text-success fw-semibold">R$ {{ sc.pagamentos_total | moeda }}</td>
+                                    <td class="text-end fw-bold {% if sc.saldo_devedor > 0 %}text-danger{% elif sc.saldo_devedor < 0 %}text-success{% endif %}">
+                                        R$ {{ sc.saldo_devedor | moeda }}
+                                    </td>
+                                    <td class="text-center no-print">
+                                        <a href="{{ url_for('relatorios_page', cliente_id=sc.cliente_id) }}"
+                                           class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir Fatura do Cliente">
+                                            <i class="fas fa-file-invoice"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-secondary fw-bold">
+                            <tr>
+                                <td>TOTAL CLIENTES</td>
+                                <td class="text-end">R$ {{ totais_clientes.fatura_anterior | moeda }}</td>
+                                <td class="text-end">R$ {{ (totais_clientes.servicos + totais_clientes.entregas) | moeda }}</td>
+                                <td class="text-end text-success">R$ {{ totais_clientes.pagamentos_total | moeda }}</td>
+                                <td class="text-end text-danger">R$ {{ totais_clientes.saldo_devedor | moeda }}</td>
+                                <td class="no-print"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Coluna Direita: Lançamentos do Caixa (Manuais + Pagamentos Sincronizados) -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-bold text-primary">
+                    <i class="fas fa-cash-register me-1"></i> Movimentações do Caixa (Receitas / Despesas / Pagamentos)
+                </h6>
+                <button type="button" class="btn btn-primary btn-sm no-print" onclick="abrirModalNovoCaixa()">
+                    <i class="fas fa-plus me-1"></i> Novo Lançamento Caixa
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 540px;">
+                    <table class="table table-sm table-striped table-bordered align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th style="width: 90px;">Data</th>
+                                <th>Descrição</th>
+                                <th style="width: 110px;" class="text-center">Operação</th>
+                                <th style="width: 115px;" class="text-end">Valor (R$)</th>
+                                <th style="width: 85px;" class="text-center no-print">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if lancamentos_caixa %}
+                                {% for lc in lancamentos_caixa %}
+                                    <tr>
+                                        <td>{{ lc.data | data_br }}</td>
+                                        <td>
+                                            {{ lc.descricao }}
+                                            {% if lc.origem == 'lancamento_cliente' %}
+                                                <span class="badge bg-info-subtle text-info-emphasis border" style="font-size: 0.68rem;">Auto Lançamento</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-center">
+                                            {% if lc.operacao in ['receita', 'recebido'] %}
+                                                <span class="badge bg-success">{{ lc.operacao|upper }}</span>
+                                            {% elif lc.operacao in ['despesa', 'pago'] %}
+                                                <span class="badge bg-danger">{{ lc.operacao|upper }}</span>
+                                            {% elif lc.operacao == 'a_receber' %}
+                                                <span class="badge bg-warning text-dark">A RECEBER</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ lc.operacao|upper }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end fw-semibold">R$ {{ lc.valor | moeda }}</td>
+                                        <td class="text-center no-print">
+                                            <button type="button" class="btn btn-sm btn-warning py-0 px-1"
+                                                    onclick='editarCaixaModal({{ lc | tojson }})'
+                                                    title="Editar">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <form method="POST" action="{{ url_for('caixa_page') }}" class="d-inline"
+                                                  onsubmit="return confirm('Deseja excluir este registro do caixa?');">
+                                                <input type="hidden" name="acao" value="excluir">
+                                                <input type="hidden" name="id" value="{{ lc.id }}">
+                                                <button type="submit" class="btn btn-sm btn-danger py-0 px-1" title="Excluir">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-3 text-muted">Nenhum movimento registrado.</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Novo / Editar Lançamento de Caixa -->
+<div class="modal fade" id="caixaModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formCaixa" method="POST" action="{{ url_for('caixa_page') }}">
+                <input type="hidden" name="acao" id="cx_acao" value="criar">
+                <input type="hidden" name="id" id="cx_id" value="">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold" id="caixaModalTitulo">Novo Lançamento no Caixa</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Descrição *</label>
+                        <input type="text" class="form-control" id="cx_descricao" name="descricao" placeholder="Ex: Combustível, Motoboy, Pagamento de serviços..." required>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Data *</label>
+                            <input type="date" class="form-control" id="cx_data" name="data" value="{{ hoje_iso }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Valor (R$) *</label>
+                            <div class="input-group">
+                                <span class="input-group-text">R$</span>
+                                <input type="text" class="form-control" id="cx_valor" name="valor" value="0,00" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Tipo de Operação *</label>
+                        <select class="form-select" id="cx_operacao" name="operacao" required>
+                            <option value="receita">Receita</option>
+                            <option value="recebido">Recebido (Pagamento de Cliente)</option>
+                            <option value="despesa">Despesa</option>
+                            <option value="pago">Pago</option>
+                            <option value="a_receber">A Receber</option>
+                            <option value="transferido">Transferido</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Vincular a Cliente (Opcional)</label>
+                        <select class="form-select" id="cx_cliente_id" name="cliente_id">
+                            <option value="">-- Nenhum cliente específico --</option>
+                            {% for c in clientes %}
+                                <option value="{{ c.id }}">{{ c.nome }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar no Caixa</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function abrirModalNovoCaixa() {
+        document.getElementById('formCaixa').reset();
+        document.getElementById('cx_acao').value = 'criar';
+        document.getElementById('cx_id').value = '';
+        document.getElementById('cx_data').value = '{{ hoje_iso }}';
+        document.getElementById('cx_valor').value = '0,00';
+        document.getElementById('caixaModalTitulo').textContent = 'Novo Lançamento no Caixa';
+        new bootstrap.Modal(document.getElementById('caixaModal')).show();
+    }
+
+    function editarCaixaModal(lc) {
+        document.getElementById('cx_acao').value = 'atualizar';
+        document.getElementById('cx_id').value = lc.id;
+        document.getElementById('cx_descricao').value = lc.descricao || '';
+        document.getElementById('cx_data').value = (lc.data || '{{ hoje_iso }}').substring(0, 10);
+        document.getElementById('cx_valor').value = formatarMoedaBR(lc.valor || 0);
+        document.getElementById('cx_operacao').value = lc.operacao || 'despesa';
+        document.getElementById('cx_cliente_id').value = lc.cliente_id || '';
+        document.getElementById('caixaModalTitulo').textContent = 'Editar Lançamento de Caixa';
+        new bootstrap.Modal(document.getElementById('caixaModal')).show();
+    }
+</script>
+{% endblock %}

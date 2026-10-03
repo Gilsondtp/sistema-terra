@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Hot Folder e Backup - {{ site_title }}{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Coluna 1: Backup Fácil (Exportar e Importar SQLite) -->
+    <div class="col-lg-5">
+        <div class="card mb-4 border-primary">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0 fw-bold">
+                    <i class="fas fa-database me-2"></i> Backup do Sistema (Exportar e Importar)
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    O banco de dados completo (Clientes, Produtos/Estoque, Lançamentos, Serviços e Caixa) fica salvo em um único arquivo <strong>SQLite (<code>sistema_terra.db</code>)</strong>.
+                </p>
+
+                <h6 class="fw-bold mb-2"><i class="fas fa-download text-success me-1"></i> 1. Exportar Backup ou Projeto Completo</h6>
+                <div class="d-grid gap-2 mb-4">
+                    <a href="{{ url_for('download_projeto_zip') }}" class="btn btn-warning fw-bold text-dark">
+                        <i class="fas fa-file-zipper me-1"></i> Baixar Projeto Completo em Python (.zip)
+                    </a>
+                    <a href="{{ url_for('exportar_backup', formato='sqlite') }}" class="btn btn-success fw-semibold">
+                        <i class="fas fa-database me-1"></i> Baixar Banco SQLite Completo (.db) — Recomendado
+                    </a>
+                    <div class="d-flex gap-2">
+                        <a href="{{ url_for('exportar_backup', formato='json') }}" class="btn btn-outline-primary w-50 btn-sm">
+                            <i class="fas fa-file-code me-1"></i> Exportar Backup (.json)
+                        </a>
+                        <a href="{{ url_for('exportar_backup', formato='sql') }}" class="btn btn-outline-secondary w-50 btn-sm">
+                            <i class="fas fa-file-lines me-1"></i> Exportar Dump (.sql)
+                        </a>
+                    </div>
+                </div>
+
+                <hr>
+
+                <h6 class="fw-bold mb-2"><i class="fas fa-upload text-primary me-1"></i> 2. Importar / Restaurar Backup</h6>
+                <p class="small text-muted mb-2">
+                    Selecione um arquivo <code>.db</code> (SQLite), <code>.json</code> ou <code>.sql</code>. O sistema cria uma cópia automática de segurança na pasta <code>backups/</code> antes de restaurar.
+                </p>
+                <form method="POST" action="{{ url_for('importar_backup') }}" enctype="multipart/form-data"
+                      onsubmit="return confirm('Deseja importar este arquivo de backup? Uma cópia automática do banco atual será salva na pasta backups/.');">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="arquivo_backup" accept=".db,.sqlite,.sqlite3,.json,.sql" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-cloud-arrow-up me-1"></i> Restaurar / Importar Backup
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Mapeamento Rápido de Subpastas do Hot Folder para Produtos (Chapas) -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0 fw-bold text-primary">
+                    <i class="fas fa-folder-open me-1"></i> Associação de Subpastas Hot Folder &rarr; Produtos (Chapas)
+                </h6>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Informe o(s) nome(s) da(s) subpasta(s) que correspondem a cada chapa (ex: <code>510x400</code> para <code>GTO</code>). Separe por vírgula se houver mais de um nome.
+                </p>
+                <form method="POST" action="{{ url_for('configuracoes_page') }}">
+                    <input type="hidden" name="acao" value="salvar_mapeamento_pastas">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Produto (Chapa)</th>
+                                    <th>Preço</th>
+                                    <th>Subpasta(s) no Hot Folder</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in produtos %}
+                                    <tr>
+                                        <td class="fw-bold">{{ p.nome }}</td>
+                                        <td>R$ {{ p.preco | moeda }}</td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm font-monospace"
+                                                   name="pasta_prod_{{ p.id }}" value="{{ p.pasta_hotfolder or '' }}"
+                                                   placeholder="Ex: 510x400">
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm w-100">
+                        <i class="fas fa-save me-1"></i> Salvar Mapeamento de Subpastas
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Coluna 2: Configuração do Caminho Hot Folder e Dados da Empresa -->
+    <div class="col-lg-7">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-bold text-primary">
+                    <i class="fas fa-network-wired me-1"></i> Configuração do Hot Folder (Rede &amp; Local) e Fatura
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('configuracoes_page') }}">
+                    <input type="hidden" name="acao" value="salvar_hotfolder">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Caminho do Hot Folder na Rede (Computador RIP CTP)</label>
+                        <input type="text" class="form-control font-monospace" name="hotfolder_network_path"
+                               value="{{ cfg.get('hotfolder_network_path', '\\\\RIPCTP\\Manuela\\OutPut') }}">
+                        <div class="form-text">
+                            Caminho padrão informado: <code>\\RIPCTP\Manuela\OutPut</code>. O sistema monitora automaticamente todas as subpastas de chapas dentro deste caminho.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Pasta Local Auxiliar / Simulação</label>
+                        <input type="text" class="form-control font-monospace" name="hotfolder_local_path"
+                               value="{{ cfg.get('hotfolder_local_path', '') }}">
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <div class="form-check form-switch mt-2">
+                                <input class="form-check-input" type="checkbox" id="chk_hf_ativo" name="hotfolder_ativo" value="1"
+                                       {% if cfg.get('hotfolder_ativo', '1') == '1' %}checked{% endif %}>
+                                <label class="form-check-label fw-semibold" for="chk_hf_ativo">
+                                    Monitoramento Automático Ativo
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold mb-1">Intervalo de Varredura (segundos)</label>
+                            <input type="number" class="form-control form-control-sm" name="hotfolder_intervalo_seg"
+                                   value="{{ cfg.get('hotfolder_intervalo_seg', '5') }}" min="2" max="120">
+                        </div>
+                    </div>
+
+                    <hr>
+                    <h6 class="fw-bold text-secondary mb-3">Dados do Cabeçalho e PIX da Fatura</h6>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Nome da Empresa</label>
+                            <input type="text" class="form-control form-control-sm" name="empresa_nome" value="{{ cfg.get('empresa_nome', '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Telefone / WhatsApp</label>
+                            <input type="text" class="form-control form-control-sm" name="empresa_telefone" value="{{ cfg.get('empresa_telefone', '') }}">
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Endereço</label>
+                            <input type="text" class="form-control form-control-sm" name="empresa_endereco" value="{{ cfg.get('empresa_endereco', '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">E-mail</label>
+                            <input type="text" class="form-control form-control-sm" name="empresa_email" value="{{ cfg.get('empresa_email', '') }}">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Chave / Titular PIX (Rodapé da Fatura)</label>
+                        <input type="text" class="form-control form-control-sm" name="empresa_pix" value="{{ cfg.get('empresa_pix', '') }}">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-1"></i> Salvar Configurações
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Log dos últimos arquivos detectados pelo Hot Folder -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-bold">
+                    <i class="fas fa-clock-rotate-left me-1"></i> Últimos Arquivos Detectados no Hot Folder
+                </h6>
+                <span class="badge bg-secondary">{{ ultimos_arquivos|length }} recentes</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 290px;">
+                    <table class="table table-sm table-striped align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Arquivo</th>
+                                <th>Pasta</th>
+                                <th>Cor</th>
+                                <th>Cliente Identificado</th>
+                                <th>Data</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if ultimos_arquivos %}
+                                {% for a in ultimos_arquivos %}
+                                    <tr>
+                                        <td class="font-monospace small">{{ a.nome_arquivo }}</td>
+                                        <td><span class="badge bg-light text-dark border">{{ a.pasta_produto }}</span></td>
+                                        <td><span class="badge bg-primary">{{ a.cor_detectada }}</span></td>
+                                        <td class="{% if not a.identificado %}text-danger fw-bold{% endif %}">
+                                            {{ a.cliente_nome }}
+                                        </td>
+                                        <td class="small text-muted">{{ a.data_lancamento | data_br }}</td>
+                                    </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-3 text-muted small">
+                                        Nenhum arquivo processado ainda. Use o botão "Testar / Simular Hot Folder" na tela Lanc. Diário.
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
