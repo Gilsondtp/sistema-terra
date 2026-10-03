@@ -245,25 +245,125 @@ class Lancamento {
         return false;
     }
 }
-public function apagarPorCliente($cliente_id) {
+public function apagarPorCliente($cliente_id, $data_inicio = null, $data_fim = null) {
     try {
+        // Monta condições (com filtro opcional de período)
+        $conditions = "l.cliente_id = :cliente_id";
+        $params = [':cliente_id' => $cliente_id];
+        if (!empty($data_inicio)) {
+            $conditions .= " AND l.data_lancamento >= :data_inicio";
+            $params[':data_inicio'] = $data_inicio;
+        }
+        if (!empty($data_fim)) {
+            $conditions .= " AND l.data_lancamento <= :data_fim";
+            $params[':data_fim'] = $data_fim;
+        }
+
         // Apaga serviços relacionados
+        // ATENÇÃO: o estoque NÃO é estornado aqui propositalmente.
+        // Os produtos foram efetivamente consumidos/vendidos e não devem
+        // voltar ao estoque, para que o saldo do mês seguinte não seja
+        // inflado com quantidades já vendidas.
         $sql = "DELETE s FROM servicos s
                 JOIN lancamentos l ON s.lancamento_id = l.id
-                WHERE l.cliente_id = :cliente_id";
+                WHERE $conditions";
         $stmt = $this->conn->prepare($sql);
-        $stmt->bindValue(':cliente_id', $cliente_id, PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
         $stmt->execute();
 
         // Apaga os lançamentos
-        $sql = "DELETE FROM lancamentos WHERE cliente_id = :cliente_id";
+        $sql = "DELETE l FROM lancamentos l WHERE $conditions";
         $stmt = $this->conn->prepare($sql);
-        $stmt->bindValue(':cliente_id', $cliente_id, PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
         $stmt->execute();
 
-        return $stmt->rowCount() > 0;
+        return true;
     } catch (Exception $e) {
-        // Aqui você pode logar ou retornar false
+        error_log("ERRO (apagar lançamentos do cliente {$cliente_id}): " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Fecha a fatura de um cliente: calcula o saldo devedor (incluindo o saldo
+ * da fatura anterior), transfere esse saldo para o campo fatura_anterior do
+ * cliente e apaga os lançamentos do período.
+ *
+ * Tudo é executado dentro de uma transação com lock no registro do cliente,
+ * garantindo que o saldo nunca seja transferido sem apagar os lançamentos
+ * (ou vice-versa) e evitando dupla transferência em acessos simultâneos.
+ *
+ * @param int         $cliente_id  ID do cliente
+ * @param string|null $data_inicio Início do período (opcional, formato MySQL)
+ * @param string|null $data_fim    Fim do período (opcional, formato MySQL)
+ * @return float|false Saldo devedor transferido, ou false em caso de erro
+ */
+public function fecharFatura($cliente_id, $data_inicio = null, $data_fim = null) {
+    $this->conn->beginTransaction();
+    try {
+        // Busca a fatura anterior do cliente com lock (evita fechamento duplo simultâneo)
+        $stmt = $this->conn->prepare("SELECT fatura_anterior FROM clientes WHERE id = ? FOR UPDATE");
+        $stmt->execute([$cliente_id]);
+        $cliente = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$cliente) {
+            throw new Exception("Cliente não encontrado.");
+        }
+        $fatura_anterior = (float)$cliente['fatura_anterior'];
+
+        // Busca os lançamentos do período (mesmo filtro exibido na tela)
+        $filtros = ['cliente_id' => $cliente_id];
+        if (!empty($data_inicio)) {
+            $filtros['data_inicio'] = $data_inicio;
+        }
+        if (!empty($data_fim)) {
+            $filtros['data_fim'] = $data_fim;
+        }
+        $lancamentos = $this->listar($filtros);
+        if ($lancamentos === false) {
+            throw new Exception("Erro ao consultar os lançamentos do cliente.");
+        }
+        if (empty($lancamentos)) {
+            throw new Exception("Nenhum lançamento encontrado para o cliente no período.");
+        }
+
+        // Calcula os totais
+        $total_servicos = 0;
+        $total_entrega = 0;
+        $total_pagamento = 0;
+        $total_pagamento_fatura_anterior = 0;
+        foreach ($lancamentos as $l) {
+            foreach ($l['servicos'] as $s) {
+                $total_servicos += (float)$s['valor'];
+            }
+            $total_entrega += (float)$l['valor_entrega'];
+            $total_pagamento += (float)$l['valor_pagamento'];
+            $total_pagamento_fatura_anterior += (float)$l['pagamento_fatura_anterior'];
+        }
+
+        // Saldo da fatura anterior + saldo do período = novo saldo devedor
+        $saldo_fatura_anterior = $fatura_anterior - $total_pagamento_fatura_anterior;
+        $saldo_devedor = ($total_servicos + $total_entrega - $total_pagamento) + $saldo_fatura_anterior;
+
+        // Transfere o saldo devedor para a fatura anterior do cliente
+        $stmt = $this->conn->prepare("UPDATE clientes SET fatura_anterior = ? WHERE id = ?");
+        $stmt->execute([$saldo_devedor, $cliente_id]);
+
+        // Apaga os lançamentos do período (sem estornar estoque — ver apagarPorCliente)
+        if (!$this->apagarPorCliente($cliente_id, $data_inicio, $data_fim)) {
+            throw new Exception("Erro ao apagar os lançamentos do cliente.");
+        }
+
+        $this->conn->commit();
+        return $saldo_devedor;
+    } catch (Exception $e) {
+        if ($this->conn->inTransaction()) {
+            $this->conn->rollBack();
+        }
+        error_log("ERRO (fechar fatura do cliente {$cliente_id}): " . $e->getMessage());
         return false;
     }
 }

@@ -16,42 +16,25 @@ $db = $database->getConnection();
 $cliente = new Cliente($db);
 $lancamento = new Lancamento($db);
 
-// Fechar Fatura: apaga todos os lançamentos do cliente selecionado
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['fechar_fatura']) && isset($_POST['cliente_id'])) {
-    $cliente_id = $_POST['cliente_id'];
+// Fechar Fatura: transfere o saldo devedor para a fatura anterior do cliente
+// e apaga os lançamentos do período exibido (tudo em transação, ver Lancamento::fecharFatura)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['fechar_fatura'])) {
+    $cliente_id = isset($_POST['cliente_id']) ? (int)$_POST['cliente_id'] : 0;
+    $data_inicio = !empty($_POST['data_inicio']) ? $_POST['data_inicio'] : null;
+    $data_fim = !empty($_POST['data_fim']) ? $_POST['data_fim'] : null;
 
-    // Calcula o saldo devedor antes de apagar
-    $lancamentos = $lancamento->listar(['cliente_id' => $cliente_id]);
-    $total_servicos = 0;
-    $total_entrega = 0;
-    $total_pagamento = 0;
-    $total_pagamento_fatura_anterior = 0;
-
-    foreach ($lancamentos as $l) {
-        foreach ($l['servicos'] as $s) {
-            $total_servicos += $s['valor'];
-        }
-        $total_entrega += $l['valor_entrega'];
-        $total_pagamento += $l['valor_pagamento'];
-        $total_pagamento_fatura_anterior += $l['pagamento_fatura_anterior'];
+    if ($cliente_id <= 0) {
+        header('Location: relatorios.php?erro=' . urlencode('Cliente não informado para fechar a fatura.'));
+        exit;
     }
 
-    // Obtém a fatura anterior atual do cliente
-    $cliente_atual = $cliente->buscarPorId($cliente_id);
-    $total_fatura_anterior = isset($cliente_atual['fatura_anterior']) ? $cliente_atual['fatura_anterior'] : 0;
+    $saldo_transferido = $lancamento->fecharFatura($cliente_id, $data_inicio, $data_fim);
 
-    // Calcula o saldo da fatura anterior
-    $saldo_fatura_anterior = $total_fatura_anterior - $total_pagamento_fatura_anterior;
-    $saldo_devedor = ($total_servicos + $total_entrega - $total_pagamento) + $saldo_fatura_anterior;
-    
-    // Atualiza a fatura anterior do cliente com o saldo devedor
-    $cliente->atualizarFaturaAnterior($cliente_id, $saldo_devedor);
-    
-    // Apaga os lançamentos
-    $lancamento->apagarPorCliente($cliente_id);
-    
-    // Redireciona para a mesma página (GET) para atualizar e evitar repost
-    header('Location: relatorios.php');
+    if ($saldo_transferido === false) {
+        header('Location: relatorios.php?erro=' . urlencode('Erro ao fechar a fatura. Nenhuma alteração foi feita.'));
+    } else {
+        header('Location: relatorios.php?mensagem=' . urlencode('Fatura fechada com sucesso! Saldo devedor de R$ ' . number_format($saldo_transferido, 2, ',', '.') . ' transferido para a próxima fatura do cliente.'));
+    }
     exit;
 }
 
@@ -220,6 +203,12 @@ if (!empty($lancamentos)) {
 <body>
     <?php include '../includes/navbar.php'; ?>
     <div class="container mt-4">
+        <?php if (isset($_GET['mensagem'])): ?>
+            <div class="alert alert-success no-print"><?php echo htmlspecialchars($_GET['mensagem']); ?></div>
+        <?php endif; ?>
+        <?php if (isset($_GET['erro'])): ?>
+            <div class="alert alert-danger no-print"><?php echo htmlspecialchars($_GET['erro']); ?></div>
+        <?php endif; ?>
         <!-- Filtros -->
         <div class="no-print">
             <div class="card mb-4">
@@ -517,9 +506,11 @@ if (!empty($lancamentos)) {
                     <i class="fas fa-print"></i> Imprimir
                 </button>
                 <form method="POST" action="" class="d-inline"
-      onsubmit="return confirm('Tem certeza que deseja apagar TODOS os lançamentos deste cliente?');">
+      onsubmit="return confirm('Tem certeza que deseja fechar a fatura exibida? Os lançamentos do período serão apagados e o saldo devedor será transferido para a próxima fatura.');">
     <input type="hidden" name="fechar_fatura" value="1">
     <input type="hidden" name="cliente_id" value="<?= htmlspecialchars($filtros['cliente_id'] ?? '') ?>">
+    <input type="hidden" name="data_inicio" value="<?= htmlspecialchars($filtros['data_inicio'] ?? '') ?>">
+    <input type="hidden" name="data_fim" value="<?= htmlspecialchars($filtros['data_fim'] ?? '') ?>">
     <button type="submit" class="btn btn-danger">
         <i class="fas fa-times"></i> Fechar Fatura
     </button>
