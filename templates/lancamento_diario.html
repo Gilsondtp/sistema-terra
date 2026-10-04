@@ -31,9 +31,6 @@
             <button type="button" class="btn btn-primary btn-sm px-3 fw-semibold" onclick="abrirModalNovoLancamento()">
                 <i class="fas fa-plus me-1"></i> Criar Lançamento
             </button>
-            <button type="button" class="btn btn-outline-danger btn-sm px-3 fw-semibold" data-bs-toggle="modal" data-bs-target="#modalViradaMes" title="Transferir saldos do mês anterior para Fatura Anterior e limpar lançamentos antigos">
-                <i class="fas fa-calendar-check me-1"></i> Virada de Mês (Fatura Anterior)
-            </button>
             <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
                 <i class="fas fa-vial me-1"></i> Testar / Simular Hot Folder
             </button>
@@ -50,6 +47,22 @@
     </div>
 
     <div class="card-body py-3">
+        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3" role="region" aria-label="Fechamento mensal">
+            <div class="d-flex align-items-center gap-3">
+                <i class="fas fa-calendar-check text-danger fs-3" aria-hidden="true"></i>
+                <div>
+                    <div class="fw-bold text-danger">Fechamento do Mês / Virada de Mês</div>
+                    <div class="small text-dark">
+                        Transfere saldos para a Fatura Anterior e organiza os lançamentos do novo mês.
+                        <strong>O Caixa é preservado</strong> — receitas, despesas e recebimentos não são apagados.
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="btn btn-danger fw-bold px-3" data-bs-toggle="modal" data-bs-target="#modalViradaMes">
+                <i class="fas fa-calendar-check me-1"></i> Abrir Fechamento Mensal
+            </button>
+        </div>
+
         <form id="formFiltroDiario" method="GET" action="{{ url_for('lancamento_diario') }}">
             <div class="row g-2 align-items-end">
                 <!-- Seletor do Modo de Exibição (Padrão: Lançamento Diário) -->
@@ -168,7 +181,7 @@
                                     {% endif %}
                                 </td>
                                 <td class="{% if not item.identificado %}texto-nao-identificado{% endif %}">
-                                    {{ item.descricao }}
+                                    <span {% if item.arquivos_origem %}title="Arquivo(s) RIP de origem: {{ item.arquivos_origem }}"{% endif %}>{{ item.descricao }}</span>
                                     {% if item.valor_entrega > 0 %}
                                         <span class="badge bg-info text-dark ms-1">Entrega: R$ {{ item.valor_entrega | moeda }}</span>
                                     {% endif %}
@@ -301,7 +314,8 @@
 <div class="modal fade" id="modalViradaMes" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <form method="POST" action="{{ url_for('virada_mes_route') }}">
+            <form method="POST" action="{{ url_for('virada_mes_route') }}"
+                  onsubmit="return confirm('Confirmar o fechamento até a data de corte escolhida? O sistema criará um backup e apagará/organizará os lançamentos conforme o modo selecionado. Os registros do Caixa serão preservados.');">
                 <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
                 <div class="modal-header bg-danger text-white">
                     <h5 class="modal-title fw-bold">
@@ -315,12 +329,13 @@
                         <strong>Como funciona a transição automática:</strong><br>
                         1. O sistema salva automaticamente uma cópia de segurança do banco atual na pasta <code>backups/</code>.<br>
                         2. Calcula o saldo final de cada cliente até a data de fechamento (<code>Fatura Anterior + Serviços + Entregas - Pagamentos</code>) e grava esse valor no campo <strong>Fatura Anterior</strong> do cadastro de todos os clientes.<br>
-                        3. Limpa os lançamentos antigos (sem estornar o estoque de chapas já consumidas) e ajusta o Hot Folder para coletar apenas arquivos a partir do novo mês.
+                        3. Limpa/organiza os lançamentos de serviços conforme o modo selecionado, sem estornar chapas já consumidas, e ajusta a data mínima do Hot Folder.<br>
+                        <strong>O Caixa não é alterado:</strong> receitas, despesas, recebimentos e pagamentos permanecem no histórico e podem ser consultados pelo período na tela Caixa.
                     </div>
                     <div class="row g-3">
                         <div class="col-md-5">
                             <label class="form-label fw-bold">Data Final do Mês Anterior (Corte)</label>
-                            <input type="date" class="form-control" name="data_corte" value="2026-09-30" required>
+                            <input type="date" class="form-control" name="data_corte" value="{{ data_corte_default }}" required>
                             <div class="form-text">Ex: <code>30/09/2026</code> para fechar Setembro e iniciar Outubro (Mês 10).</div>
                         </div>
                         <div class="col-md-7">
@@ -342,7 +357,7 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                     <button type="submit" class="btn btn-danger fw-bold">
-                        <i class="fas fa-check-circle me-1"></i> Executar Virada de Mês e Limpar Anteriores
+                        <i class="fas fa-check-circle me-1"></i> Confirmar Fechamento / Virada de Mês
                     </button>
                 </div>
             </form>

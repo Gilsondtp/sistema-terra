@@ -3,7 +3,7 @@ import re
 import json
 import shutil
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sistema_terra.db")
@@ -101,6 +101,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS clientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
+            cnpj TEXT DEFAULT '',
             apelidos TEXT DEFAULT '',
             telefone TEXT DEFAULT '',
             rua_bairro TEXT DEFAULT '',
@@ -192,11 +193,17 @@ def init_db():
         """
     )
 
-    # Migração leve para bancos existentes sem a coluna ignorado
+    # Migrações leves para bancos existentes.
     try:
         cur.execute("ALTER TABLE arquivos_monitorados ADD COLUMN ignorado INTEGER NOT NULL DEFAULT 0")
     except Exception:
         pass
+
+    # CNPJ foi adicionado depois da criação do banco. Mantém compatibilidade com
+    # bancos SQLite já instalados, sem recriar nem perder dados dos clientes.
+    colunas_clientes = {row["name"] for row in cur.execute("PRAGMA table_info(clientes)").fetchall()}
+    if "cnpj" not in colunas_clientes:
+        cur.execute("ALTER TABLE clientes ADD COLUMN cnpj TEXT DEFAULT ''")
 
     # Configurações padrão
     default_hotfolder_local = os.path.join(BASE_DIR, "hotfolder_output")
@@ -361,17 +368,33 @@ def set_config(dados):
 # ==============================================================================
 # CLIENTES
 # ==============================================================================
+def normalizar_cnpj(valor):
+    """Guarda apenas os 14 dígitos do CNPJ, aceitando entrada com ou sem máscara."""
+    return re.sub(r"\D", "", str(valor or ""))[:14]
+
+
+def formatar_cnpj(valor):
+    """Aplica a máscara brasileira ao CNPJ completo; preserva valores parciais."""
+    bruto = str(valor or "").strip()
+    digitos = normalizar_cnpj(bruto)
+    if len(digitos) == 14:
+        return f"{digitos[:2]}.{digitos[2:5]}.{digitos[5:8]}/{digitos[8:12]}-{digitos[12:]}"
+    return bruto
+
+
 def listar_clientes(termo=None):
     conn = get_db_connection()
     if termo:
         like = f"%{termo}%"
+        conditions = ["nome LIKE ?", "rua_bairro LIKE ?", "cidade LIKE ?", "apelidos LIKE ?"]
+        params = [like, like, like, like]
+        cnpj_termo = normalizar_cnpj(termo)
+        if cnpj_termo:
+            conditions.append("cnpj LIKE ?")
+            params.append(f"%{cnpj_termo}%")
         rows = conn.execute(
-            """
-            SELECT * FROM clientes
-            WHERE nome LIKE ? OR rua_bairro LIKE ? OR cidade LIKE ? OR apelidos LIKE ?
-            ORDER BY nome COLLATE NOCASE
-            """,
-            (like, like, like, like),
+            f"SELECT * FROM clientes WHERE {' OR '.join(conditions)} ORDER BY nome COLLATE NOCASE",
+            params,
         ).fetchall()
     else:
         rows = conn.execute(
@@ -390,16 +413,17 @@ def buscar_cliente(cliente_id):
     return dict(row) if row else None
 
 
-def criar_cliente(nome, telefone="", rua_bairro="", cidade="", fatura_anterior=0.0, apelidos=""):
+def criar_cliente(nome, telefone="", rua_bairro="", cidade="", fatura_anterior=0.0, apelidos="", cnpj=""):
     conn = get_db_connection()
     with conn:
         cur = conn.execute(
             """
-            INSERT INTO clientes (nome, apelidos, telefone, rua_bairro, cidade, fatura_anterior)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO clientes (nome, cnpj, apelidos, telefone, rua_bairro, cidade, fatura_anterior)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 nome.strip(),
+                normalizar_cnpj(cnpj),
                 (apelidos or "").strip(),
                 (telefone or "").strip(),
                 (rua_bairro or "").strip(),
@@ -412,7 +436,7 @@ def criar_cliente(nome, telefone="", rua_bairro="", cidade="", fatura_anterior=0
     return new_id
 
 
-def atualizar_cliente(cliente_id, nome, telefone="", rua_bairro="", cidade="", fatura_anterior=None, apelidos=None):
+def atualizar_cliente(cliente_id, nome, telefone="", rua_bairro="", cidade="", fatura_anterior=None, apelidos=None, cnpj=None):
     conn = get_db_connection()
     old = buscar_cliente(cliente_id)
     if not old:
@@ -420,15 +444,17 @@ def atualizar_cliente(cliente_id, nome, telefone="", rua_bairro="", cidade="", f
         return False
     fat = old["fatura_anterior"] if fatura_anterior is None else parse_money(fatura_anterior)
     ap = old.get("apelidos", "") if apelidos is None else apelidos.strip()
+    cnpj_valor = old.get("cnpj", "") if cnpj is None else normalizar_cnpj(cnpj)
     with conn:
         conn.execute(
             """
             UPDATE clientes
-            SET nome = ?, apelidos = ?, telefone = ?, rua_bairro = ?, cidade = ?, fatura_anterior = ?
+            SET nome = ?, cnpj = ?, apelidos = ?, telefone = ?, rua_bairro = ?, cidade = ?, fatura_anterior = ?
             WHERE id = ?
             """,
             (
                 nome.strip(),
+                cnpj_valor,
                 ap,
                 (telefone or "").strip(),
                 (rua_bairro or "").strip(),
@@ -1284,13 +1310,14 @@ def fechar_fatura_cliente(cliente_id, data_inicio=None, data_fim=None):
         return False, str(e)
 
 
-def realizar_virada_mes(data_corte="2026-09-30", modo_limpeza="somente_hotfolder_mes_atual"):
+def realizar_virada_mes(data_corte=None, modo_limpeza="somente_hotfolder_mes_atual"):
     """
     Realiza a transição (virada de mês) de TODOS os clientes de uma só vez:
     1. Faz backup automático de segurança do banco atual em backups/.
-    2. Calcula o saldo final de cada cliente até `data_corte` (ex: 30/09/2026):
-       nova_fatura_anterior = max(0, fatura_anterior_cadastrada - pgto_fatura_anterior) + (servicos + entregas - pagamentos)
-       e grava esse valor em `clientes.fatura_anterior`.
+    2. Calcula o saldo final de cada cliente até `data_corte`:
+       nova_fatura_anterior = (servicos + entregas - pagamentos)
+                              + (fatura_anterior_cadastrada - pgto_fatura_anterior)
+       e grava esse valor em `clientes.fatura_anterior`, preservando eventual saldo credor.
     3. Limpa os lançamentos antigos (sem estornar o estoque de chapas já consumidas):
        - 'somente_hotfolder_mes_atual': limpa todos os lançamentos <= data_corte e qualquer lançamento manual antigo do SQL,
          mantendo apenas o que o Hot Folder coletou após data_corte (no novo mês).
@@ -1298,7 +1325,10 @@ def realizar_virada_mes(data_corte="2026-09-30", modo_limpeza="somente_hotfolder
        - 'limpar_tudo': limpa todos os lançamentos para começar o mês zerado apenas com os saldos em Fatura Anterior.
     4. Atualiza a data mínima do Hot Folder (hotfolder_data_minima) para o dia seguinte a data_corte,
        evitando que arquivos antigos de meses anteriores na pasta do RIP sejam coletados.
+    5. Não apaga nem altera `lancamentos_caixa`: o histórico financeiro permanece preservado.
     """
+    if not data_corte:
+        data_corte = (date.today().replace(day=1) - timedelta(days=1)).isoformat()
     data_corte_iso = parse_date_iso(data_corte)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     if os.path.exists(DB_PATH):

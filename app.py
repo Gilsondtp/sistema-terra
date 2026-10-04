@@ -58,6 +58,11 @@ def filter_data_curta(val):
     return database.format_date_short(val)
 
 
+@app.template_filter("cnpj")
+def filter_cnpj(val):
+    return database.formatar_cnpj(val)
+
+
 @app.context_processor
 def inject_globals():
     cfg = database.get_config()
@@ -111,6 +116,22 @@ def _extrair_servicos_form(req):
                 }
             )
     return servicos
+
+
+def _resumir_arquivos_origem(servico):
+    """Formata os nomes TIFF de origem para consulta no tooltip do serviço diário."""
+    origem = servico.get("arquivos_origem") or ""
+    if isinstance(origem, str):
+        try:
+            origem = json.loads(origem)
+        except (TypeError, ValueError):
+            origem = [origem] if origem else []
+    if not isinstance(origem, (list, tuple)):
+        return ""
+    nomes = [str(nome) for nome in origem if nome]
+    if len(nomes) > 4:
+        return ", ".join(nomes[:4]) + f" e mais {len(nomes) - 4} arquivo(s)"
+    return ", ".join(nomes)
 
 
 # ==============================================================================
@@ -208,6 +229,7 @@ def lancamento_diario():
                         "produto_nome": s.get("produto_nome") or "-",
                         "pasta_origem": s.get("pasta_origem") or "",
                         "cores_detectadas": s.get("cores_detectadas") or "",
+                        "arquivos_origem": _resumir_arquivos_origem(s),
                         "valor": val,
                         "valor_entrega": float(l["valor_entrega"] or 0.0) if idx == 0 else 0.0,
                         "valor_pagamento": float(l["valor_pagamento"] or 0.0) if idx == 0 else 0.0,
@@ -232,6 +254,7 @@ def lancamento_diario():
                     "produto_nome": "-",
                     "pasta_origem": "",
                     "cores_detectadas": "",
+                    "arquivos_origem": "",
                     "valor": 0.0,
                     "valor_entrega": float(l["valor_entrega"] or 0.0),
                     "valor_pagamento": float(l["valor_pagamento"] or 0.0),
@@ -259,6 +282,7 @@ def lancamento_diario():
         soma_valores=soma_valores,
         total_servicos_count=total_servicos_count,
         total_nao_identificados=total_nao_identificados,
+        data_corte_default=(date.today().replace(day=1) - timedelta(days=1)).isoformat(),
     )
 
 
@@ -310,10 +334,12 @@ def excluir_lancamento_route():
 
 @app.route("/virada-mes", methods=["POST"])
 def virada_mes_route():
-    data_corte = request.form.get("data_corte") or "2026-09-30"
+    data_corte = request.form.get("data_corte") or (date.today().replace(day=1) - timedelta(days=1)).isoformat()
     modo_limpeza = request.form.get("modo_limpeza") or "somente_hotfolder_mes_atual"
     redirect_to = request.form.get("redirect_to") or url_for("lancamento_diario")
     ok, msg = database.realizar_virada_mes(data_corte=data_corte, modo_limpeza=modo_limpeza)
+    if ok:
+        msg += " Os lançamentos do Caixa foram preservados e não foram apagados."
     flash(msg, "success" if ok else "danger")
     return redirect(redirect_to)
 
@@ -393,18 +419,19 @@ def clientes_page():
             cidade = request.form.get("cidade", "")
             fatura_anterior = request.form.get("fatura_anterior", "0,00")
             apelidos = request.form.get("apelidos", "")
+            cnpj = request.form.get("cnpj", "")
 
             if not nome:
                 flash("O nome do cliente é obrigatório!", "danger")
             else:
                 if acao == "atualizar" and cid:
                     database.atualizar_cliente(
-                        cid, nome, telefone, rua_bairro, cidade, fatura_anterior, apelidos
+                        cid, nome, telefone, rua_bairro, cidade, fatura_anterior, apelidos, cnpj
                     )
                     flash("Cliente atualizado com sucesso!", "success")
                 else:
                     database.criar_cliente(
-                        nome, telefone, rua_bairro, cidade, fatura_anterior, apelidos
+                        nome, telefone, rua_bairro, cidade, fatura_anterior, apelidos, cnpj
                     )
                     flash("Cliente cadastrado com sucesso!", "success")
         elif acao == "excluir":
@@ -527,6 +554,7 @@ def relatorios_page():
     cliente_id = request.values.get("cliente_id", "")
     data_inicio = request.values.get("data_inicio", "")
     data_fim = request.values.get("data_fim", "")
+    fatura_gerada = request.args.get("gerar") == "1" and bool(cliente_id)
 
     lancamentos = []
     cliente_atual = None
@@ -606,6 +634,7 @@ def relatorios_page():
         observacoes_relatorio=observacoes_relatorio,
         primeira_data=primeira_data,
         ultima_data=ultima_data,
+        fatura_gerada=fatura_gerada,
     )
 
 
@@ -1112,6 +1141,9 @@ def download_projeto_zip():
     """
     mem_zip = io.BytesIO()
     arquivos_incluir = [
+        ".gitignore",
+        "Lancamentos 30_09_final.sql",
+        "README_PYTHON.md",
         "app.py",
         "database.py",
         "hotfolder_monitor.py",
@@ -1119,8 +1151,8 @@ def download_projeto_zip():
         "iniciar_sistema.bat",
         "iniciar_sem_janela.vbs",
         "parar_sistema.bat",
-        "README_PYTHON.md",
         "sistema_terra.db",
+        os.path.join("backups", "setembro_completo_30_09_2026.db"),
     ]
     pastas_incluir = ["templates", "static"]
 
@@ -1128,7 +1160,7 @@ def download_projeto_zip():
         for fname in arquivos_incluir:
             fpath = os.path.join(database.BASE_DIR, fname)
             if os.path.exists(fpath):
-                zf.write(fpath, arcname=os.path.join("sistema_terra_python", fname))
+                zf.write(fpath, arcname=os.path.join("sistema-terra", fname))
 
         for folder in pastas_incluir:
             folder_path = os.path.join(database.BASE_DIR, folder)
@@ -1137,7 +1169,7 @@ def download_projeto_zip():
                     for f in files:
                         full_p = os.path.join(root, f)
                         rel_p = os.path.relpath(full_p, database.BASE_DIR)
-                        zf.write(full_p, arcname=os.path.join("sistema_terra_python", rel_p))
+                        zf.write(full_p, arcname=os.path.join("sistema-terra", rel_p))
 
     mem_zip.seek(0)
     return send_file(

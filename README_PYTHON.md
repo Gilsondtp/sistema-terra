@@ -6,7 +6,8 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 
 1. **Primeira Tela — `LANC. DIÁRIO` (`/lancamento-diario` ou `/`)**:
    - Exibe a listagem dos serviços monitorados automaticamente pelo Hot Folder e lançados no dia (ou outra data selecionada).
-   - **Barra Superior**: Seletor de modo de exibição (*Lançamento Diário (Padrão)*, *Por Cliente*, *Por Produto*, *Por Descrição do Serviço*, *Apenas Não Identificados*), filtro por data/cliente/produto/texto, botão **Criar Lançamento** (abre o modal completo de lançamento), botão **Testar / Simular Hot Folder**, **Atualizar Pasta** e **Imprimir Listagem**.
+   - **Barra Superior**: Seletor de modo de exibição (*Lançamento Diário (Padrão)*, *Por Cliente*, *Por Produto*, *Por Descrição do Serviço*, *Apenas Não Identificados*), filtro por data/cliente/produto/texto, botão **Criar Lançamento** (abre o modal completo), **Fechamento do Mês / Virada de Mês**, botão **Testar / Simular Hot Folder**, **Atualizar Pasta** e **Imprimir Listagem**.
+   - O fechamento mensal atualiza saldos de clientes e organiza os lançamentos de serviço, mas **preserva o histórico financeiro da tela Caixa** (receitas, despesas, recebimentos e pagamentos).
    - **Destaque em Vermelho para Não Identificados**: Serviços cujo cliente não pôde ser identificado pelo nome do arquivo aparecem destacados em **vermelho** com a opção de **Atribuir Cliente** diretamente na linha ou pelo botão Editar.
    - **Soma nas Colunas**: Rodapé da tabela com a soma total da **Quantidade de Produto (Chapas)** e a soma de **Valores (R$)** da listagem exibida.
    - **Barra Inferior**: Exibe a quantidade total de serviços, a quantidade de **Não Identificados** e o total de chapas/valores.
@@ -14,7 +15,7 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 2. **Monitoramento Automático de Hot Folder (`\\RIPCTP\Manuela\OutPut`)**:
    - Monitora as subpastas associadas a cada chapa/produto (ex: `510x400` &rarr; `GTO`, `660x530` &rarr; `Adast`, `650x550` &rarr; `MO`, `521` &rarr; `521`, `745x605` &rarr; `Speed`, `724` &rarr; `724`, `Solna` &rarr; `Solna`).
    - Reconhece arquivos separados pelo RIP (*Raster Precision Screen*) nas cores **`C`, `M`, `Y`, `K`, `GRAY`, `PANTONE`** e múltiplas páginas numeradas.
-   - **Tolerância a falta de espaços, acentos, caixa alta/baixa e erros de grafia**: Identifica o cliente por similaridade (Damerau-Levenshtein), reconhecendo variações como `gilso` ou `glison` para `Gilson`, mesmo quando o nome do arquivo está colado sem espaços (ex: `gilsoncartazc.tif`).
+   - **Tolerância a falta de espaços, acentos, caixa alta/baixa e erros de grafia**: Identifica o cliente por similaridade (Damerau-Levenshtein), reconhecendo variações como `gilso` ou `glison` para `Gilson`, mesmo quando o nome do arquivo está colado sem espaços (ex: `gilsoncartazc.tif`). A descrição apenas recupera espaços e remove marcadores do RIP; não faz correção automática da grafia. Sufixos `C/M/Y/K` ambíguos só são removidos quando há separador, extensão RIP, transição de caixa ou arquivos irmãos confirmando a série.
 
 3. **Segunda Alteração — `PRODUTOS / ESTOQUE` (`/produtos`)**:
    - O controle de estoque permanece unificado e aperfeiçoado na própria tela de Produtos (Chapas), exibindo Estoque Inicial, Consumido, Estoque Atual, Valor de Compra, Valor em Estoque, Preço de Venda, Custo das Chapas Consumidas, Status (`OK`, `BAIXO`, `CRÍTICO`), vínculo de subpasta Hot Folder, ajuste rápido de entrada/saída e impressão.
@@ -24,7 +25,7 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 
 5. **Telas Preservadas Integralmente**:
    - **Lançamentos (`/lancamentos`)**: Formulário completo com múltiplos serviços, entrega, pagamento/desconto, fatura anterior, pagtº fatura anterior, saldo da fatura anterior, observação e área de registros com filtros.
-   - **Clientes (`/clientes`)**: Cadastro, busca, edição e exclusão protegida.
+   - **Clientes (`/clientes`)**: Cadastro, busca, edição e exclusão protegida, com campo opcional de CNPJ formatado.
    - **Relatório / Fatura Individual (`/relatorios`)**: Emissão de fatura formatada para impressão, relatório de produtos utilizados no período e botão **Fechar Fatura** (transfere o saldo devedor para `fatura_anterior` do cliente e limpa os lançamentos do período sem devolver o estoque consumido).
    - **Demonstrativo (`/demonstrativo`)**: Resumo geral de todos os clientes por período ou produto, produtos utilizados, alerta de estoque crítico, impressão e **Exportação para Excel (`.xlsx`)**.
    - **Backup Fácil (`/configuracoes`)**: Exportação e importação em 1 clique do banco SQLite (`.db`), `.json` ou `.sql`.

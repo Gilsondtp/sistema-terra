@@ -8,8 +8,8 @@
             <i class="fas fa-users me-1"></i> Cadastro de Clientes ({{ clientes|length }})
         </h5>
         <div class="d-flex gap-2">
-            <input type="text" id="buscaRapidaCliente" class="form-control form-control-sm" style="width: 240px;"
-                   placeholder="Buscar por nome, endereço ou cidade..." oninput="filtrarTabelaClientes()">
+            <input type="text" id="buscaRapidaCliente" class="form-control form-control-sm" style="width: 270px;"
+                   placeholder="Buscar por nome, CNPJ, endereço ou cidade..." oninput="filtrarTabelaClientes()">
             <button type="button" class="btn btn-primary btn-sm px-3" onclick="abrirModalNovoCliente()">
                 <i class="fas fa-plus me-1"></i> Novo Cliente
             </button>
@@ -22,6 +22,7 @@
                     <tr>
                         <th style="width: 65px;" class="text-center">ID</th>
                         <th>Nome</th>
+                        <th>CNPJ</th>
                         <th>Apelidos / Prefixos Hot Folder</th>
                         <th>Telefone</th>
                         <th>Endereço</th>
@@ -32,9 +33,10 @@
                 </thead>
                 <tbody>
                     {% for c in clientes %}
-                        <tr class="linha-cliente">
+                        <tr class="linha-cliente" data-cnpj="{{ c.cnpj or '' }}">
                             <td class="text-center text-muted">{{ c.id }}</td>
                             <td class="fw-semibold">{{ c.nome }}</td>
+                            <td class="text-nowrap">{{ c.cnpj | cnpj or '-' }}</td>
                             <td>
                                 {% if c.apelidos %}
                                     <span class="badge bg-light text-dark border">{{ c.apelidos }}</span>
@@ -91,6 +93,13 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Nome do Cliente *</label>
                         <input type="text" class="form-control" id="cli_nome" name="nome" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">CNPJ</label>
+                        <input type="text" class="form-control" id="cli_cnpj" name="cnpj"
+                               inputmode="numeric" autocomplete="off" maxlength="18"
+                               placeholder="00.000.000/0000-00" aria-describedby="cli_cnpj_help">
+                        <div id="cli_cnpj_help" class="form-text">Campo opcional. Informe os 14 dígitos do CNPJ.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Apelidos / Abreviações no Hot Folder (Opcional)</label>
@@ -154,10 +163,24 @@
 
 {% block extra_scripts %}
 <script>
+    function formatarCnpj(valor) {
+        const digitos = String(valor || '').replace(/\D/g, '').slice(0, 14);
+        return digitos
+            .replace(/^(\d{2})(\d)/, '$1.$2')
+            .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+            .replace(/\.(\d{3})(\d)/, '.$1/$2')
+            .replace(/(\d{4})(\d)/, '$1-$2');
+    }
+
+    document.getElementById('cli_cnpj').addEventListener('input', function () {
+        this.value = formatarCnpj(this.value);
+    });
+
     function abrirModalNovoCliente() {
         document.getElementById('formCliente').reset();
         document.getElementById('cli_acao').value = 'criar';
         document.getElementById('cli_id').value = '';
+        document.getElementById('cli_cnpj').value = '';
         document.getElementById('cli_fatura_anterior').value = '0,00';
         document.getElementById('clienteModalTitulo').textContent = 'Novo Cliente';
         new bootstrap.Modal(document.getElementById('clienteModal')).show();
@@ -167,6 +190,7 @@
         document.getElementById('cli_acao').value = 'atualizar';
         document.getElementById('cli_id').value = c.id;
         document.getElementById('cli_nome').value = c.nome || '';
+        document.getElementById('cli_cnpj').value = formatarCnpj(c.cnpj || '');
         document.getElementById('cli_apelidos').value = c.apelidos || '';
         document.getElementById('cli_telefone').value = c.telefone || '';
         document.getElementById('cli_rua_bairro').value = c.rua_bairro || '';
@@ -182,9 +206,13 @@
     }
 
     function filtrarTabelaClientes() {
-        const termo = document.getElementById('buscaRapidaCliente').value.toLowerCase();
+        const termo = document.getElementById('buscaRapidaCliente').value.trim().toLowerCase();
+        const digitos = termo.replace(/\D/g, '');
         document.querySelectorAll('#tabelaClientes tbody tr.linha-cliente').forEach(tr => {
-            tr.style.display = tr.textContent.toLowerCase().includes(termo) ? '' : 'none';
+            const textoLinha = tr.textContent.toLowerCase();
+            const cnpj = String(tr.dataset.cnpj || '').replace(/\D/g, '');
+            const encontrou = textoLinha.includes(termo) || (digitos.length >= 3 && cnpj.includes(digitos));
+            tr.style.display = encontrou ? '' : 'none';
         });
     }
 </script>

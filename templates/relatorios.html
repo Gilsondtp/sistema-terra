@@ -3,6 +3,12 @@
 
 {% block extra_head %}
 <style>
+    #relatorio-gerado {
+        scroll-margin-top: 88px;
+    }
+    #relatorio-gerado:focus {
+        outline: none;
+    }
     .header-fatura {
         display: flex;
         align-items: center;
@@ -10,8 +16,12 @@
         margin-bottom: 16px;
     }
     .header-fatura img {
-        max-width: 170px;
+        display: block;
+        width: 170px;
+        max-width: 100%;
         height: auto;
+        object-fit: contain;
+        flex: 0 0 auto;
     }
     .header-fatura-text {
         font-size: 12px;
@@ -47,11 +57,12 @@
         </h5>
     </div>
     <div class="card-body">
-        <form method="GET" action="{{ url_for('relatorios_page') }}">
+        <form id="formGerarFatura" method="GET" action="{{ url_for('relatorios_page') }}">
+            <input type="hidden" name="gerar" value="1">
             <div class="row g-3 align-items-end">
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Cliente *</label>
-                    <select class="form-select" name="cliente_id" required onchange="this.form.submit()">
+                    <select class="form-select" name="cliente_id" required>
                         <option value="">Selecione um cliente</option>
                         {% for c in clientes %}
                             <option value="{{ c.id }}" {% if cliente_id == (c.id|string) %}selected{% endif %}>{{ c.nome }}</option>
@@ -67,20 +78,29 @@
                     <input type="date" class="form-control" name="data_fim" value="{{ data_fim }}">
                 </div>
                 <div class="col-md-2">
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-search me-1"></i> Gerar Fatura
+                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                        <i class="fas fa-file-invoice me-1"></i> Gerar Fatura
                     </button>
                 </div>
+            </div>
+            <div class="form-text mt-2">
+                Selecione o cliente e o período, depois clique em <strong>Gerar Fatura</strong>. O relatório será exibido abaixo.
             </div>
         </form>
     </div>
 </div>
 
 {% if cliente_atual %}
-    <div class="card p-4 print-content">
+    {% if fatura_gerada %}
+        <div class="alert alert-success no-print" role="status">
+            <i class="fas fa-circle-check me-1"></i>
+            Fatura gerada para <strong>{{ cliente_atual.nome }}</strong>. O relatório e os valores calculados estão abaixo.
+        </div>
+    {% endif %}
+    <div class="card p-4 print-content" id="relatorio-gerado" tabindex="-1" data-gerado="{{ '1' if fatura_gerada else '0' }}">
         <!-- Cabeçalho da Fatura -->
         <div class="header-fatura">
-            <img src="{{ url_for('static', filename='img/cabecario.jpg') }}" alt="Cabeçalho Terra Fotolito">
+            <img src="{{ url_for('static', filename='img/cabecario.svg') }}" alt="Logomarca Terra Fotolito" width="252" height="104">
             <p class="header-fatura-text">
                 {{ cfg.get('empresa_endereco', 'Campinas de Pirajá, nº 24 - Pirajá - Salvador - Ba.') }}<br>
                 Tel / Whts: {{ cfg.get('empresa_telefone', '71 3242-6120') }}<br>
@@ -281,4 +301,16 @@
         </div>
     </div>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const relatorio = document.getElementById('relatorio-gerado');
+        if (relatorio && relatorio.dataset.gerado === '1') {
+            relatorio.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            relatorio.focus({ preventScroll: true });
+        }
+    });
+</script>
 {% endblock %}

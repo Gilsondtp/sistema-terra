@@ -9,7 +9,7 @@
             <h4 class="mb-0 fw-bold">TERRA FOTOLITO — Relatório de Produtos e Controle de Estoque (Chapas)</h4>
             <small>Emitido em: {{ hoje_br }}</small>
         </div>
-        <img src="{{ url_for('static', filename='img/cabecario.jpg') }}" alt="Logo" style="height: 48px;">
+        <img src="{{ url_for('static', filename='img/cabecario.svg') }}" alt="Logomarca Terra Fotolito" width="252" height="104" style="display: block; width: auto; height: 48px; max-width: 100%; object-fit: contain;">
     </div>
 </div>
 
@@ -62,7 +62,8 @@
 <!-- Tabela Aperfeiçoada de Produtos e Estoque -->
 <div class="card">
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 no-print">
-        <div>
+        <div class="d-flex flex-wrap align-items-center gap-3">
+            <img src="{{ url_for('static', filename='img/cabecario.svg') }}" alt="Logomarca Terra Fotolito" width="252" height="104" style="display: block; width: auto; height: 42px; max-width: 100%; object-fit: contain;">
             <h5 class="mb-0 fw-bold text-primary">
                 <i class="fas fa-boxes-stacked me-1"></i> Cadastro de Produtos (Chapas) e Controle de Estoque
             </h5>

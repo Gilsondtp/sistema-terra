@@ -88,8 +88,8 @@ def obter_data_real_arquivo(caminho_arquivo):
 
 def formatar_descricao_servico(texto):
     """
-    Restaura os espaços entre as palavras da descrição do serviço que o RIP removeu,
-    e remove extensões residuais (.ps / ps, .pdf / pdf, .cdr / cdr, .eps / eps) no final.
+    Restaura espaços com limites de palavra/medida reconhecíveis e remove extensões
+    residuais do RIP no final. Não corrige a grafia nem substitui letras do nome original.
     Exemplo: 'Santinho7x10JooeKtiaA4x1ps' -> 'Santinho 7x10 Jooe Ktia A 4x1'
     """
     if not texto:
@@ -382,6 +382,56 @@ def damerau_levenshtein(s1, s2):
     return d[len1][len2]
 
 
+def _base_para_comparar_arquivos_cor(texto):
+    """Normaliza a base RIP sem uma possível cor/página terminal para comparar irmãos."""
+    base = str(texto or "").strip(" _-.()[]")
+    base = re.sub(r"(?i)(?:ps|pdf|cdr|eps|ai|prn|plt|indd|psd)$", "", base).strip(" _-.")
+    # Em nomes como job_1C, o número é página e fica antes do identificador de cor.
+    m_pag = re.search(r"(?:[\s_\-\.]+(?:pag(?:ina)?[\s_\-]*|p[\s_\-]*)?\d{1,3}|[\(\[]\d{1,3}[\)\]])$", base, flags=re.IGNORECASE)
+    if m_pag and not re.search(r"\d\s*[xX]\s*\d{1,3}$", base):
+        base = base[:m_pag.start()].strip(" _-.()[]")
+    return normalizar_compacto(base)
+
+
+def _irmaos_confirmam_cor(stem_atual, cor_candidata, arquivos_irmaos):
+    """Só trata uma letra final minúscula como cor quando outros TIFFs confirmam a série."""
+    prefixo_atual = _base_para_comparar_arquivos_cor(stem_atual[:-1])
+    if not prefixo_atual:
+        return False
+
+    cores_encontradas = {str(cor_candidata).upper()}
+    for nome in arquivos_irmaos or []:
+        stem = os.path.splitext(os.path.basename(nome))[0].strip()
+
+        # Remove paginação RIP colada depois da cor/extensão de origem (ex.: psC1, psY02).
+        m_num = re.search(
+            r"(?i)(?:[cmyk]|gray|grey|black|preto|cyan|magenta|yellow|ps|pdf|cdr|eps)(\d{1,3})$",
+            stem,
+        )
+        if m_num and not re.search(r"\d[xX]\d{1,3}$", stem):
+            stem = stem[:m_num.start(1)].rstrip(" _-.()[]")
+
+        # Também aceita paginação separada: _1, -p2, (3), [4].
+        m_pag = re.search(
+            r"(?:[\s_\-\.]+(?:pag(?:ina)?[\s_\-]*|p[\s_\-]*)?(\d{1,3})|[\s_\-\.]*[\(\[](\d{1,3})[\)\]])$",
+            stem,
+            flags=re.IGNORECASE,
+        )
+        if m_pag and not re.search(r"\d\s*[xX]\s*\d{1,3}$", stem):
+            stem = stem[:m_pag.start()].strip(" _-.()[]")
+
+        if not stem or stem[-1].lower() not in "cmyk":
+            continue
+        cor_irma = stem[-1].upper()
+        prefixo_irma = _base_para_comparar_arquivos_cor(stem[:-1])
+        if prefixo_irma == prefixo_atual:
+            cores_encontradas.add(cor_irma)
+            if len(cores_encontradas) > 1:
+                return True
+
+    return False
+
+
 def extrair_cor_e_base(nome_arquivo, arquivos_irmaos=None):
     """
     Analisa o nome de um arquivo .tif/.tiff/.tff gerado pelo RIP (Raster Precision Screen)
@@ -489,17 +539,18 @@ def extrair_cor_e_base(nome_arquivo, arquivos_irmaos=None):
                 original_stem = original_stem[:-1].strip(" _-.()[]")
                 mudou = True
 
-        # G) Caso o RIP tenha deixado tudo colado na mesma caixa (ex: "gilsoncartazc", "gilsoncartazm", "...psc")
-        if not cor and len(original_stem) >= 4 and original_stem[-1].lower() in ("c", "m", "y", "k"):
-            cand_char = original_stem[-1].lower()
+        # G) Sufixo colado sem separador. Exige contexto confiável para não cortar
+        # palavras legítimas terminadas em c, m, y ou k (ex.: Dynamic, Party, Click).
+        if not cor and len(original_stem) >= 4 and original_stem[-1].lower() in "cmyk":
+            cand_char = original_stem[-1]
             cand_prefix = original_stem[:-1]
+            tem_extensao_rip = cand_prefix.lower().endswith(("ps", "pdf", "cdr", "eps"))
+            confirmado_por_irmaos = _irmaos_confirmam_cor(
+                original_stem, cand_char, arquivos_irmaos
+            )
 
-            if cand_prefix.lower().endswith(("ps", "pdf", "cdr", "eps")) or cand_char in ("c", "y", "k"):
+            if tem_extensao_rip or confirmado_por_irmaos:
                 cor = cand_char.upper()
-                original_stem = cand_prefix.strip(" _-.()[]")
-                mudou = True
-            elif cand_char == "m" and len(cand_prefix) >= 2 and cand_prefix[-1].lower() not in ("a", "e", "i", "o", "u"):
-                cor = "M"
                 original_stem = cand_prefix.strip(" _-.()[]")
                 mudou = True
 
