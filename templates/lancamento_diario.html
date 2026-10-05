@@ -328,9 +328,10 @@
                         <i class="fas fa-info-circle me-1"></i>
                         <strong>Como funciona a transição automática:</strong><br>
                         1. O sistema salva automaticamente uma cópia de segurança do banco atual na pasta <code>backups/</code>.<br>
-                        2. Calcula o saldo final de cada cliente até a data de fechamento (<code>Fatura Anterior + Serviços + Entregas - Pagamentos</code>) e grava esse valor no campo <strong>Fatura Anterior</strong> do cadastro de todos os clientes.<br>
+                        2. Calcula o saldo até a data de corte (<code>Fatura Anterior - Pagamentos da Fatura Anterior + Serviços + Entregas - Pagamentos do período</code>) e grava o resultado no campo <strong>Fatura Anterior</strong> de cada cliente.<br>
                         3. Limpa/organiza os lançamentos de serviços conforme o modo selecionado, sem estornar chapas já consumidas, e ajusta a data mínima do Hot Folder.<br>
-                        <strong>O Caixa não é alterado:</strong> receitas, despesas, recebimentos e pagamentos permanecem no histórico e podem ser consultados pelo período na tela Caixa.
+                        <strong>O Caixa não é alterado:</strong> receitas, despesas, recebimentos e pagamentos permanecem no histórico e podem ser consultados pelo período na tela Caixa.<br>
+                        <strong>Proteção contra perda:</strong> se houver lançamentos posteriores ao corte que seriam apagados, o fechamento será cancelado; escolha <em>Manter todos os lançamentos após a data de corte</em> para preservá-los.
                     </div>
                     <div class="row g-3">
                         <div class="col-md-5">
@@ -342,13 +343,13 @@
                             <label class="form-label fw-bold">O que manter no banco para o novo mês?</label>
                             <select class="form-select" name="modo_limpeza">
                                 <option value="somente_hotfolder_mes_atual" selected>
-                                    Manter SOMENTE os arquivos coletados pelo Hot Folder neste mês (Recomendado)
+                                    Manter SOMENTE Hot Folder pós-corte (bloqueado se houver lançamentos manuais pós-corte)
                                 </option>
                                 <option value="manter_apos_corte">
                                     Manter todos os lançamentos (Hot Folder e manuais) após a data de corte
                                 </option>
                                 <option value="limpar_tudo">
-                                    Limpar todos os lançamentos e começar o mês 100% zerado (só com Fatura Anterior)
+                                    Limpar todos os lançamentos (bloqueado se houver lançamentos após o corte)
                                 </option>
                             </select>
                         </div>

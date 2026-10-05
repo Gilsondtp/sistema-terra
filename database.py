@@ -1303,6 +1303,20 @@ def fechar_fatura_cliente(cliente_id, data_inicio=None, data_fim=None):
                 ids_para_apagar,
             )
 
+            # As faturas do período foram incorporadas ao saldo do cliente; alinhe
+            # também os lançamentos que permanecem no novo período para não exibir
+            # nem reaplicar o saldo anterior antigo após o fechamento.
+            saldo_final = round(saldo_devedor, 2)
+            conn.execute(
+                """
+                UPDATE lancamentos
+                SET fatura_anterior = ?,
+                    saldo_fatura_anterior = ? - COALESCE(pagamento_fatura_anterior, 0.0)
+                WHERE cliente_id = ?
+                """,
+                (saldo_final, saldo_final, cliente_id),
+            )
+
         conn.close()
         return True, round(saldo_devedor, 2)
     except Exception as e:
@@ -1330,6 +1344,51 @@ def realizar_virada_mes(data_corte=None, modo_limpeza="somente_hotfolder_mes_atu
     if not data_corte:
         data_corte = (date.today().replace(day=1) - timedelta(days=1)).isoformat()
     data_corte_iso = parse_date_iso(data_corte)
+    modos_validos = {
+        "somente_hotfolder_mes_atual",
+        "manter_apos_corte",
+        "limpar_tudo",
+    }
+    if modo_limpeza not in modos_validos:
+        return False, "Modo de fechamento inválido. Nenhum dado foi alterado."
+
+    # Evita somar lançamentos do novo mês no saldo anterior ou apagá-los por acidente.
+    # Para manter lançamentos pós-corte (inclusive manuais), use manter_apos_corte.
+    if modo_limpeza in ("limpar_tudo", "somente_hotfolder_mes_atual"):
+        valida_conn = get_db_connection()
+        try:
+            if modo_limpeza == "limpar_tudo":
+                futuros = valida_conn.execute(
+                    "SELECT COUNT(*) FROM lancamentos WHERE data_lancamento > ? OR data_lancamento IS NULL",
+                    (data_corte_iso,),
+                ).fetchone()[0]
+                motivo = (
+                    "O modo 'Limpar todos' somaria os lançamentos posteriores ao saldo anterior e apagaria seus detalhes. "
+                    "Escolha 'Manter todos os lançamentos após a data de corte' ou ajuste o corte."
+                )
+            else:
+                futuros = valida_conn.execute(
+                    """
+                    SELECT COUNT(*) FROM lancamentos
+                    WHERE (data_lancamento > ? OR data_lancamento IS NULL)
+                      AND COALESCE(origem, 'manual') != 'hotfolder'
+                    """,
+                    (data_corte_iso,),
+                ).fetchone()[0]
+                motivo = (
+                    "O modo 'Somente Hot Folder' apagaria lançamento(s) manual(is) posterior(es). "
+                    "Escolha 'Manter todos os lançamentos após a data de corte' ou ajuste o corte."
+                )
+        except Exception as e:
+            return False, f"Não foi possível validar os lançamentos após o corte: {e}. Nenhum dado foi alterado."
+        finally:
+            valida_conn.close()
+        if futuros:
+            return False, (
+                f"Virada cancelada: foram encontrados {futuros} lançamento(s) posteriores à data de corte. "
+                f"{motivo} Nenhum dado foi alterado."
+            )
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     if os.path.exists(DB_PATH):
         shutil.copy2(

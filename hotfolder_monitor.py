@@ -186,8 +186,8 @@ def limpar_e_corrigir_registros_monitorados():
         cfg = get_config()
         data_minima = (cfg.get("hotfolder_data_minima") or "2026-10-01").strip()
 
-        # Corrige automaticamente os saldos de Fatura Anterior (fechamento de Setembro -> Outubro)
-        # caso o banco local estivesse com os valores anteriores ao ajuste completo do dump 30_09_final.sql
+        # Corrige pontualmente saldos confirmados no fechamento de Setembro -> Outubro
+        # para instalações que ainda tenham os valores antigos no banco local.
         ajustes_fatura_setembro = {
             24: (2090.00, 1900.50),   # Armo
             11: (8523.00, 8783.00),   # CADS
@@ -196,6 +196,7 @@ def limpar_e_corrigir_registros_monitorados():
             10: (1402.50, 1082.50),   # Gold
             6:  (8330.00, 8312.00),   # Noel
             18: (4812.50, 5195.00),   # Ribas
+            23: (10192.50, 8852.50), # Nordeste — fechamento confirmado pela fatura de setembro
             30: (1795.00, 1870.00),   # Visiongraf
         }
         with conn:
@@ -203,6 +204,20 @@ def limpar_e_corrigir_registros_monitorados():
                 row_cli = conn.execute(
                     "SELECT fatura_anterior FROM clientes WHERE id = ?", (cid_aj,)
                 ).fetchone()
+                if cid_aj == 23:
+                    # Só aplicar no banco já virado para outubro; se setembro ainda
+                    # estiver lançado, não há dados suficientes para corrigir linhas individuais.
+                    setembro_pendente = conn.execute(
+                        """
+                        SELECT 1 FROM lancamentos
+                        WHERE cliente_id = ?
+                          AND (data_lancamento <= '2026-09-30' OR data_lancamento IS NULL)
+                        LIMIT 1
+                        """,
+                        (cid_aj,),
+                    ).fetchone()
+                    if setembro_pendente:
+                        continue
                 if row_cli and abs(float(row_cli["fatura_anterior"] or 0.0) - val_antigo) < 0.05:
                     conn.execute(
                         "UPDATE clientes SET fatura_anterior = ? WHERE id = ?",
