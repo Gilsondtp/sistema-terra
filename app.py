@@ -554,7 +554,8 @@ def relatorios_page():
     cliente_id = request.values.get("cliente_id", "")
     data_inicio = request.values.get("data_inicio", "")
     data_fim = request.values.get("data_fim", "")
-    fatura_gerada = request.args.get("gerar") == "1" and bool(cliente_id)
+    # Ao escolher um cliente (ou alterar o período), a fatura é exibida automaticamente.
+    fatura_gerada = bool(cliente_id)
 
     lancamentos = []
     cliente_atual = None
