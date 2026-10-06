@@ -871,8 +871,13 @@ def caixa_page():
             flash("Lançamento de caixa excluído!", "success")
         return redirect(url_for("caixa_page"))
 
-    data_inicio = request.args.get("data_inicio", "")
-    data_fim = request.args.get("data_fim", "")
+    if "data_inicio" not in request.args and "data_fim" not in request.args:
+        hoje = date.today()
+        data_inicio = hoje.replace(day=1).isoformat()
+        data_fim = hoje.isoformat()
+    else:
+        data_inicio = (request.args.get("data_inicio") or "").strip()
+        data_fim = (request.args.get("data_fim") or "").strip()
     operacao_filtro = request.args.get("operacao", "")
 
     lancamentos_caixa = database.listar_lancamentos_caixa(

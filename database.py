@@ -339,6 +339,20 @@ def init_db():
             caixa_iniciais,
         )
 
+    # Migra a descrição dos pagamentos sincronizados: mantém data/valor/link pelo banco,
+    # mas remove o ID técnico que não é útil na listagem do Caixa.
+    cur.execute(
+        """
+        UPDATE lancamentos_caixa
+        SET descricao = 'Pagtº Cliente: ' || COALESCE(
+            (SELECT nome FROM clientes WHERE clientes.id = lancamentos_caixa.cliente_id),
+            'Cliente'
+        )
+        WHERE origem = 'lancamento_cliente'
+          AND (instr(descricao, '(Lanç. #') > 0 OR instr(descricao, 'Auto Lançamento') > 0)
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -716,7 +730,7 @@ def _sincronizar_pagamento_caixa(conn, lancamento_id, cliente_id, data_lancament
             row_c = conn.execute("SELECT nome FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
             if row_c:
                 cliente_nome = row_c["nome"]
-        desc = f"Pagtº Cliente: {cliente_nome} (Lanç. #{lancamento_id})"
+        desc = f"Pagtº Cliente: {cliente_nome}"
         conn.execute(
             """
             INSERT INTO lancamentos_caixa (descricao, data, valor, operacao, cliente_id, lancamento_id, origem, usuario)
@@ -1548,7 +1562,14 @@ def listar_lancamentos_caixa(data_inicio=None, data_fim=None, operacao=None):
         params,
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item.get("origem") == "lancamento_cliente":
+            cliente_nome = (item.get("cliente_nome") or "Cliente").strip()
+            item["descricao"] = f"Pagtº Cliente: {cliente_nome}"
+        result.append(item)
+    return result
 
 
 def criar_lancamento_caixa(descricao, data_str, valor, operacao, cliente_id=None):

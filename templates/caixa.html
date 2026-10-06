@@ -77,12 +77,13 @@
                     <button type="submit" class="btn btn-primary btn-sm w-100">
                         <i class="fas fa-filter me-1"></i> Filtrar
                     </button>
-                    <a href="{{ url_for('caixa_page') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+                    <a href="{{ url_for('caixa_page') }}" class="btn btn-outline-secondary btn-sm">Mês atual</a>
                     <button type="button" onclick="window.print()" class="btn btn-secondary btn-sm">
                         <i class="fas fa-print"></i>
                     </button>
                 </div>
             </div>
+            <div class="form-text mt-2">Por padrão, são exibidos os lançamentos do mês atual. Informe outras datas para consultar o histórico.</div>
         </form>
     </div>
 </div>
@@ -148,13 +149,23 @@
     <!-- Coluna Direita: Lançamentos do Caixa (Manuais + Pagamentos Sincronizados) -->
     <div class="col-lg-6">
         <div class="card h-100">
-            <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h6 class="mb-0 fw-bold text-primary">
                     <i class="fas fa-cash-register me-1"></i> Movimentações do Caixa (Receitas / Despesas / Pagamentos)
                 </h6>
-                <button type="button" class="btn btn-primary btn-sm no-print" onclick="abrirModalNovoCaixa()">
-                    <i class="fas fa-plus me-1"></i> Novo Lançamento Caixa
-                </button>
+                <div class="d-flex align-items-center gap-3 ms-auto">
+                    <div class="d-flex align-items-center gap-2 small text-muted no-print" aria-label="Legenda da origem dos lançamentos">
+                        <span class="d-inline-flex align-items-center gap-1">
+                            <span class="rounded-circle bg-success" style="width: 0.55rem; height: 0.55rem;" aria-hidden="true"></span> Automático
+                        </span>
+                        <span class="d-inline-flex align-items-center gap-1">
+                            <span class="rounded-circle bg-secondary" style="width: 0.55rem; height: 0.55rem;" aria-hidden="true"></span> Manual
+                        </span>
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm no-print" onclick="abrirModalNovoCaixa()">
+                        <i class="fas fa-plus me-1"></i> Novo Lançamento Caixa
+                    </button>
+                </div>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive" style="max-height: 540px;">
@@ -174,10 +185,11 @@
                                     <tr>
                                         <td>{{ lc.data | data_br }}</td>
                                         <td>
+                                            {% set origem_legenda = 'Lançamento automático' if lc.origem == 'lancamento_cliente' else 'Lançamento manual' %}
+                                            <span class="d-inline-block rounded-circle {{ 'bg-success' if lc.origem == 'lancamento_cliente' else 'bg-secondary' }} me-2"
+                                                  style="width: 0.55rem; height: 0.55rem; vertical-align: middle;"
+                                                  title="{{ origem_legenda }}" role="img" aria-label="{{ origem_legenda }}"></span>
                                             {{ lc.descricao }}
-                                            {% if lc.origem == 'lancamento_cliente' %}
-                                                <span class="badge bg-info-subtle text-info-emphasis border" style="font-size: 0.68rem;">Auto Lançamento</span>
-                                            {% endif %}
                                         </td>
                                         <td class="text-center">
                                             {% if lc.operacao in ['receita', 'recebido'] %}

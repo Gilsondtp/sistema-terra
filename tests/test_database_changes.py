@@ -26,6 +26,43 @@ class DatabaseChangeTests(unittest.TestCase):
         database.BACKUP_DIR = self.original_backup_dir
         self.temp_dir.cleanup()
 
+    def test_cash_auto_descriptions_are_shortened_and_manual_rows_are_marked_by_origin(self):
+        with sqlite3.connect(self.db_path) as conn:
+            stored_auto_description = conn.execute(
+                "SELECT descricao FROM lancamentos_caixa WHERE origem = 'lancamento_cliente' LIMIT 1"
+            ).fetchone()[0]
+        self.assertNotIn("(Lanç. #", stored_auto_description)
+
+        existing_auto = next(
+            row for row in database.listar_lancamentos_caixa()
+            if row["origem"] == "lancamento_cliente"
+        )
+        self.assertTrue(existing_auto["descricao"].startswith("Pagtº Cliente: "))
+        self.assertNotIn("(Lanç. #", existing_auto["descricao"])
+
+        manual_id = database.criar_lancamento_caixa(
+            "Compra de insumos", "2026-10-06", "45,00", "despesa"
+        )
+        manual = next(row for row in database.listar_lancamentos_caixa() if row["id"] == manual_id)
+        self.assertEqual(manual["descricao"], "Compra de insumos")
+        self.assertEqual(manual["origem"], "manual")
+
+        lancamento_id = database.criar_lancamento(
+            {
+                "cliente_id": 37,
+                "data_lancamento": "2026-10-06",
+                "valor_pagamento": "10,00",
+                "pagamento_fatura_anterior": "0,00",
+                "servicos": [],
+            }
+        )
+        automatico = next(
+            row for row in database.listar_lancamentos_caixa()
+            if row["lancamento_id"] == lancamento_id
+        )
+        self.assertEqual(automatico["descricao"], "Pagtº Cliente: Edson")
+        self.assertEqual(automatico["origem"], "lancamento_cliente")
+
     def test_cnpj_is_persisted_formatted_and_searchable(self):
         with sqlite3.connect(self.db_path) as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(clientes)")}
