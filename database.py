@@ -212,6 +212,9 @@ def init_db():
         "hotfolder_local_path": default_hotfolder_local,
         "hotfolder_ativo": "1",
         "hotfolder_intervalo_seg": "5",
+        # Origem dos PostScript pré-RIP: configuração separada do Hot Folder TIFF.
+        "ps_entrada_path": r"\\Ripctp\rip (d:) (z)",
+        "ps_renomeador_ativo": "1",
         "hotfolder_data_minima": "2026-10-01",
         "empresa_nome": "Terra Fotolito",
         "empresa_endereco": "Campinas de Pirajá, nº 24 - Pirajá - Salvador - Ba.",

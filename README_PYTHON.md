@@ -12,10 +12,11 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
    - **Soma nas Colunas**: Rodapé da tabela com a soma total da **Quantidade de Produto (Chapas)** e a soma de **Valores (R$)** da listagem exibida.
    - **Barra Inferior**: Exibe a quantidade total de serviços, a quantidade de **Não Identificados** e o total de chapas/valores.
 
-2. **Monitoramento Automático de Hot Folder (`\\RIPCTP\Manuela\OutPut`)**:
+2. **Monitoramento Automático de Hot Folder TIFF (`\\RIPCTP\Manuela\OutPut`)**:
    - Monitora as subpastas associadas a cada chapa/produto (ex: `510x400` &rarr; `GTO`, `660x530` &rarr; `Adast`, `650x550` &rarr; `MO`, `521` &rarr; `521`, `745x605` &rarr; `Speed`, `724` &rarr; `724`, `Solna` &rarr; `Solna`).
    - Reconhece arquivos separados pelo RIP (*Raster Precision Screen*) nas cores **`C`, `M`, `Y`, `K`, `GRAY`, `PANTONE`** e múltiplas páginas numeradas.
    - **Tolerância a falta de espaços, acentos, caixa alta/baixa e erros de grafia**: Identifica o cliente por similaridade (Damerau-Levenshtein), reconhecendo variações como `gilso` ou `glison` para `Gilson`, mesmo quando o nome do arquivo está colado sem espaços (ex: `gilsoncartazc.tif`). A descrição apenas recupera espaços e remove marcadores do RIP; não faz correção automática da grafia. Sufixos `C/M/Y/K` ambíguos só são removidos quando há separador, extensão RIP, transição de caixa ou arquivos irmãos confirmando a série.
+   - **Normalização pré-RIP separada**: monitora os arquivos `.ps` na origem `\\Ripctp\rip (d:) (z)` (incluindo as subpastas de data) e, após o arquivo ficar estável, troca espaços por `_`. Não altera os TIFFs, o conteúdo nem os nomes das pastas; pode ser desligada separadamente em Configurações.
 
 3. **Segunda Alteração — `PRODUTOS / ESTOQUE` (`/produtos`)**:
    - O controle de estoque permanece unificado e aperfeiçoado na própria tela de Produtos (Chapas), exibindo Estoque Inicial, Consumido, Estoque Atual, Valor de Compra, Valor em Estoque, Preço de Venda, Custo das Chapas Consumidas, Status (`OK`, `BAIXO`, `CRÍTICO`), vínculo de subpasta Hot Folder, ajuste rápido de entrada/saída e impressão.

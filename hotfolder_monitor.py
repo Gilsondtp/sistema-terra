@@ -86,6 +86,111 @@ def obter_data_real_arquivo(caminho_arquivo):
         return date.today().isoformat()
 
 
+def normalizar_nomes_arquivos_ps(diretorio_raiz, estado_estabilidade=None, verificacoes_estaveis=2):
+    """
+    Substitui espaços por underscores apenas nos nomes de arquivos .ps, recursivamente.
+    Espera o arquivo permanecer estável em verificações consecutivas para não renomear
+    um PostScript enquanto ainda está sendo gravado. Não altera conteúdo, pastas nem TIFFs.
+
+    `estado_estabilidade` deve ser reutilizado entre ciclos do monitor. Retorna os pares
+    (caminho_original, caminho_novo) renomeados neste ciclo. Se o destino já existir,
+    mantém o original intacto e registra o conflito sem sobrescrever o arquivo existente.
+    """
+    if estado_estabilidade is None:
+        estado_estabilidade = {}
+
+    try:
+        verificacoes_estaveis = max(1, int(verificacoes_estaveis))
+    except (TypeError, ValueError):
+        verificacoes_estaveis = 2
+
+    if not diretorio_raiz or not os.path.isdir(diretorio_raiz):
+        return []
+
+    renomeados = []
+    caminhos_vistos = set()
+
+    for pasta_atual, subpastas, arquivos in os.walk(diretorio_raiz, topdown=True):
+        # Ignora diretórios ocultos/temporários, mas percorre as pastas de data e suas filhas.
+        subpastas[:] = sorted(
+            pasta for pasta in subpastas
+            if not pasta.startswith((".", "~"))
+        )
+
+        for nome in arquivos:
+            _, extensao = os.path.splitext(nome)
+            if extensao.lower() != ".ps":
+                continue
+
+            caminho_origem = os.path.join(pasta_atual, nome)
+            chave = os.path.normcase(os.path.abspath(caminho_origem))
+            caminhos_vistos.add(chave)
+
+            nome_base, extensao = os.path.splitext(nome)
+            if nome.startswith((".", "~")) or " " not in nome_base:
+                estado_estabilidade.pop(chave, None)
+                continue
+
+            try:
+                stat = os.stat(caminho_origem)
+            except OSError:
+                estado_estabilidade.pop(chave, None)
+                continue
+
+            assinatura = (
+                stat.st_size,
+                getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)),
+            )
+            anterior = estado_estabilidade.get(chave)
+            if not anterior or anterior[:2] != assinatura:
+                # Primeira observação ou arquivo alterado: começa a contar estabilidade.
+                estado_estabilidade[chave] = (*assinatura, 0, None)
+                continue
+
+            contagem_estavel = anterior[2] + 1
+            destino_bloqueado = anterior[3]
+            if destino_bloqueado and os.path.exists(destino_bloqueado):
+                # O conflito já foi comunicado; evita repetir a mensagem a cada ciclo.
+                estado_estabilidade[chave] = (*assinatura, contagem_estavel, destino_bloqueado)
+                continue
+
+            if destino_bloqueado:
+                # O destino conflitante foi removido: revalida a estabilidade antes de tentar.
+                contagem_estavel = 0
+
+            if contagem_estavel < verificacoes_estaveis:
+                estado_estabilidade[chave] = (*assinatura, contagem_estavel, None)
+                continue
+
+            nome_novo = nome_base.replace(" ", "_") + extensao
+            caminho_destino = os.path.join(pasta_atual, nome_novo)
+            if os.path.exists(caminho_destino):
+                print(
+                    f"[PS] Não renomeado; destino já existe: {caminho_origem} -> {caminho_destino}"
+                )
+                estado_estabilidade[chave] = (*assinatura, contagem_estavel, caminho_destino)
+                continue
+
+            try:
+                # Renomeia no mesmo diretório/volume: preserva o arquivo e seus dados.
+                os.rename(caminho_origem, caminho_destino)
+            except OSError as erro:
+                print(f"[PS] Erro ao renomear {caminho_origem}: {erro}")
+                estado_estabilidade[chave] = (*assinatura, 0, None)
+                continue
+
+            estado_estabilidade.pop(chave, None)
+            renomeados.append((caminho_origem, caminho_destino))
+            print(f"[PS] Nome normalizado antes do RIP: {caminho_origem} -> {caminho_destino}")
+
+    # Remove estados de arquivos que já foram movidos/apagados desde a última varredura.
+    for chave in list(estado_estabilidade):
+        if chave not in caminhos_vistos:
+            estado_estabilidade.pop(chave, None)
+
+    return renomeados
+
+
 def formatar_descricao_servico(texto):
     """
     Restaura espaços com limites de palavra/medida reconhecíveis e remove extensões
@@ -1100,11 +1205,34 @@ class HotFolderWatcherThread(threading.Thread):
         self.running = True
         self.last_scan = None
         self.total_detected = 0
+        self._ps_estado_estabilidade = {}
+        self._ps_diretorio_configurado = None
 
     def run(self):
         while self.running:
             try:
                 cfg = get_config()
+
+                # Normalização técnica pré-RIP, independente do monitoramento de TIFFs.
+                ps_path = (cfg.get("ps_entrada_path") or "").strip()
+                ps_ativo = cfg.get("ps_renomeador_ativo", "1") == "1"
+                if ps_ativo and ps_path:
+                    chave_diretorio = os.path.normcase(os.path.abspath(ps_path))
+                    if chave_diretorio != self._ps_diretorio_configurado:
+                        self._ps_estado_estabilidade.clear()
+                        self._ps_diretorio_configurado = chave_diretorio
+                    try:
+                        normalizar_nomes_arquivos_ps(
+                            ps_path,
+                            estado_estabilidade=self._ps_estado_estabilidade,
+                        )
+                    except Exception as erro:
+                        print(f"[PS] Erro na varredura de {ps_path}: {erro}")
+                else:
+                    self._ps_estado_estabilidade.clear()
+                    self._ps_diretorio_configurado = None
+
+                # Mantém o fluxo existente do Hot Folder exclusivamente para TIFFs.
                 if cfg.get("hotfolder_ativo", "1") == "1":
                     novos = executar_ciclo_monitoramento()
                     self.last_scan = datetime.now().strftime("%H:%M:%S")

@@ -67,6 +67,16 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn('name="data_fim" value=""', html)
         self.assertIn("Pagtº Cliente: Norte Grafica", html)
 
+    def test_ps_source_is_configured_separately_from_tiff_hotfolder(self):
+        response = self.app_module.app.test_client().get("/configuracoes")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('name="ps_entrada_path"', html)
+        self.assertIn('name="ps_renomeador_ativo"', html)
+        self.assertIn('value="\\\\Ripctp\\rip (d:) (z)"', html)
+        self.assertIn('name="hotfolder_network_path"', html)
+        self.assertIn('value="\\\\RIPCTP\\Manuela\\OutPut"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

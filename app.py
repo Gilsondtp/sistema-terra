@@ -949,6 +949,8 @@ def configuracoes_page():
                     "hotfolder_local_path": request.form.get("hotfolder_local_path", "").strip(),
                     "hotfolder_ativo": "1" if request.form.get("hotfolder_ativo") == "1" else "0",
                     "hotfolder_intervalo_seg": request.form.get("hotfolder_intervalo_seg", "5"),
+                    "ps_entrada_path": request.form.get("ps_entrada_path", "").strip(),
+                    "ps_renomeador_ativo": "1" if request.form.get("ps_renomeador_ativo") == "1" else "0",
                     "empresa_nome": request.form.get("empresa_nome", "Terra Fotolito").strip(),
                     "empresa_endereco": request.form.get("empresa_endereco", "").strip(),
                     "empresa_telefone": request.form.get("empresa_telefone", "").strip(),
