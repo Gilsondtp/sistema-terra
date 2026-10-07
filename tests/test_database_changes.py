@@ -81,6 +81,43 @@ class DatabaseChangeTests(unittest.TestCase):
         )
         self.assertEqual(database.buscar_cliente(client_id)["cnpj"], "98765432000110")
 
+    def test_known_compact_hotfolder_description_is_corrected_without_changing_amounts(self):
+        with sqlite3.connect(self.db_path) as conn:
+            client = conn.execute("SELECT id FROM clientes WHERE id = 20").fetchone()
+            self.assertIsNotNone(client)
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
+                     valor_entrega, valor_pagamento, fatura_anterior, pagamento_fatura_anterior,
+                     saldo_fatura_anterior, observacao)
+                VALUES (?, 'terra', 1, 'hotfolder', '2026-10-07', 0, 0, 0, 0, 0, 'teste parser')
+                """,
+                (client[0],),
+            )
+            lancamento_id = cursor.lastrowid
+            cursor = conn.execute(
+                """
+                INSERT INTO servicos
+                    (lancamento_id, produto_id, descricao, quantidade, valor,
+                     cores_detectadas, arquivos_origem, pasta_origem)
+                VALUES (?, NULL, 'ARQUIVOSENVIADO Stestenome 5', 7, 123.45,
+                        'C, M, Y, K', '[]', '510x400')
+                """,
+                (lancamento_id,),
+            )
+            servico_id = cursor.lastrowid
+            conn.commit()
+
+        hotfolder_monitor.limpar_e_corrigir_registros_monitorados()
+
+        with sqlite3.connect(self.db_path) as conn:
+            servico = conn.execute(
+                "SELECT descricao, quantidade, valor FROM servicos WHERE id = ?",
+                (servico_id,),
+            ).fetchone()
+        self.assertEqual(tuple(servico), ("ARQUIVOS_ENVIADOS_teste_nome5", 7, 123.45))
+
     def test_nordeste_september_balance_correction_updates_october_snapshots(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE clientes SET fatura_anterior = 10192.50 WHERE id = 23")

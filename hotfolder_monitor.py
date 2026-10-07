@@ -59,6 +59,11 @@ PALAVRAS_GRAFICA = [
     "ofertas", "oferta", "promocao", "sorte",
 ]
 
+# Casos compactados confirmados pelo RIP em que `_` é mais seguro que tentar adivinhar espaços.
+DESCRICOES_RIP_COMPACTAS = {
+    "arquivosenviadostestenome5": "ARQUIVOS_ENVIADOS_teste_nome5",
+}
+
 
 def eh_arquivo_tiff_valido(nome_arquivo):
     """
@@ -272,6 +277,13 @@ def formatar_descricao_servico(texto):
             break
 
     s = re.sub(r"\s+", " ", s).strip()
+
+    # O RIP pode eliminar underscores do PS ao gerar o TIFF. Neste nome já confirmado,
+    # recompõe os limites e mantém '_' na descrição para não voltar a colar as palavras.
+    chave_compacta = re.sub(r"[^a-z0-9]", "", s.lower())
+    if chave_compacta in DESCRICOES_RIP_COMPACTAS:
+        return DESCRICOES_RIP_COMPACTAS[chave_compacta]
+
     return s
 
 
@@ -353,10 +365,25 @@ def limpar_e_corrigir_registros_monitorados():
             """
         ).fetchall()
         lids_reprocessar = set()
+        descricoes_corrigir = []
         for sv in servs_ps:
             desc_sv = (sv["descricao"] or "").strip()
+            chave_desc = re.sub(r"[^a-z0-9]", "", desc_sv.lower())
+            if chave_desc in DESCRICOES_RIP_COMPACTAS:
+                desc_corrigida = DESCRICOES_RIP_COMPACTAS[chave_desc]
+                if desc_sv != desc_corrigida:
+                    descricoes_corrigir.append((desc_corrigida, sv["id"]))
+                    desc_sv = desc_corrigida
             if re.search(r"(?:\b(?:ps|pdf|cdr|eps)\s+[cmykCMYK]|(?:ps|pdf|cdr|eps)[cmykCMYK])$", desc_sv, flags=re.IGNORECASE):
                 lids_reprocessar.add(sv["lancamento_id"])
+
+        # Atualiza somente a descrição já lançada deste caso conhecido; quantidade e estoque ficam intactos.
+        if descricoes_corrigir:
+            with conn:
+                conn.executemany(
+                    "UPDATE servicos SET descricao = ? WHERE id = ?",
+                    descricoes_corrigir,
+                )
 
         for r in rows:
             if not r["ignorado"] and r["lancamento_id"] and eh_arquivo_tiff_valido(r["nome_arquivo"]):

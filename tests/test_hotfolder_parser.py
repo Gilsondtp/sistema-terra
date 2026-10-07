@@ -45,6 +45,27 @@ class HotFolderParserTests(unittest.TestCase):
                 base, color, _ = hotfolder_monitor.extrair_cor_e_base(filename)
                 self.assertEqual((base, color), expected)
 
+    def test_confirmed_rip_collapsed_name_keeps_underscores_as_separators(self):
+        client = {"id": 20, "nome": "Terra Fotolito", "apelidos": "terrafotolito"}
+        self.assertEqual(
+            hotfolder_monitor.formatar_descricao_servico("ARQUIVOSENVIADO Stestenome 5"),
+            "ARQUIVOS_ENVIADOS_teste_nome5",
+        )
+        filenames = (
+            "terra_ARQUIVOS_ENVIADOS_teste_nome5.tif",
+            "terra_ARQUIVOSENVIADOStestenome5.tif",
+        )
+
+        for filename in filenames:
+            with self.subTest(filename=filename):
+                base, _, _ = hotfolder_monitor.extrair_cor_e_base(filename)
+                parsed = hotfolder_monitor.identificar_cliente_e_servico(base, [client])
+                self.assertEqual(parsed["cliente_id"], 20)
+                self.assertEqual(
+                    parsed["descricao_servico"],
+                    "ARQUIVOS_ENVIADOS_teste_nome5",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
