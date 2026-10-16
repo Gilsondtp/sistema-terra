@@ -198,16 +198,21 @@
                                         <td class="text-end">R$ {{ l.valor_pagamento | moeda }}</td>
                                         <td class="text-end fw-bold">R$ {{ l.saldo | moeda }}</td>
                                         <td class="text-center no-print">
-                                            <button type="button" class="btn btn-sm btn-warning"
-                                                    onclick='carregarLancamentoNoFormPagina({{ l | tojson }})'
-                                                    title="Editar Lançamento">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <button type="button" class="btn btn-sm btn-danger"
-                                                    onclick="confirmarExclusaoPag({{ l.id }})"
-                                                    title="Excluir Lançamento">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
+                                            {% if l.fatura_id and l.fatura_status != 'reaberta' %}
+                                                <span class="badge text-bg-success">Arquivado {{ l.fatura_periodo }}</span>
+                                            {% else %}
+                                                {% if l.fatura_status == 'reaberta' %}<span class="badge text-bg-warning">Revisão aberta</span><br>{% endif %}
+                                                <button type="button" class="btn btn-sm btn-warning"
+                                                        onclick='carregarLancamentoNoFormPagina({{ l | tojson }})'
+                                                        title="Editar Lançamento">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-danger"
+                                                        onclick="confirmarExclusaoPag({{ l.id }})"
+                                                        title="Excluir Lançamento">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            {% endif %}
                                         </td>
                                     </tr>
                                 {% endfor %}

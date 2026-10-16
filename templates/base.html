@@ -165,6 +165,11 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'faturas' %}active{% endif %}" href="{{ url_for('faturas_page') }}">
+                            <i class="fas fa-box-archive me-1"></i> Histórico de Faturas
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link {% if active_page == 'demonstrativo' %}active{% endif %}" href="{{ url_for('demonstrativo_page') }}">
                             <i class="fas fa-chart-pie me-1"></i> Demonstrativo
                         </a>

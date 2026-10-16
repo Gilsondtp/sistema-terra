@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Fatura {{ fatura.periodo }} — {{ fatura.cliente_nome }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div>
+        <a href="{{ url_for('faturas_page', cliente_id=fatura.cliente_id) }}" class="text-decoration-none small">
+            <i class="fas fa-arrow-left me-1"></i>Voltar ao histórico
+        </a>
+        <h3 class="fw-bold text-primary mt-2 mb-1">Fatura {{ fatura.periodo }}</h3>
+        <div class="fs-5 fw-semibold">{{ fatura.cliente_nome }}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 no-print">
+        <a class="btn btn-outline-primary" href="{{ url_for('relatorios_page', cliente_id=fatura.cliente_id, periodo=fatura.periodo) }}">
+            <i class="fas fa-print me-1"></i>Ver / imprimir fatura
+        </a>
+        {% if fatura.status == 'reaberta' %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('lancamentos_page', cliente_id=fatura.cliente_id, data_inicio=fatura.data_inicio, data_fim=fatura.data_fim) }}">
+                <i class="fas fa-pen-to-square me-1"></i>Editar lançamentos
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="alert {% if fatura.status == 'reaberta' %}alert-warning{% else %}alert-success{% endif %}">
+    {% if fatura.status == 'reaberta' %}
+        <strong><i class="fas fa-lock-open me-1"></i>Fatura reaberta para revisão.</strong>
+        Correções ficam limitadas a {{ fatura.cliente_nome }} em {{ fatura.periodo }}. Ao fechar novamente, os saldos posteriores serão recalculados.
+    {% else %}
+        <strong><i class="fas fa-lock me-1"></i>Fatura fechada e preservada.</strong>
+        Os lançamentos não podem ser alterados enquanto o fechamento estiver ativo.
+    {% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card h-100"><div class="card-body"><div class="small text-muted">Saldo de abertura</div><div class="fs-5 fw-bold">R$ {{ totais.fatura_anterior|moeda }}</div></div></div></div>
+    <div class="col-md-3"><div class="card h-100"><div class="card-body"><div class="small text-muted">Serviços + entregas</div><div class="fs-5 fw-bold">R$ {{ totais.total_fatura|moeda }}</div></div></div></div>
+    <div class="col-md-3"><div class="card h-100"><div class="card-body"><div class="small text-muted">Pagamentos / abatimentos</div><div class="fs-5 fw-bold text-success">R$ {{ totais.total_pago|moeda }}</div></div></div></div>
+    <div class="col-md-3"><div class="card h-100"><div class="card-body"><div class="small text-muted">Saldo recalculado</div><div class="fs-5 fw-bold text-primary">R$ {{ totais.saldo_fechamento_calculado|moeda }}</div></div></div></div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header fw-bold">Lançamentos e serviços preservados ({{ lancamentos|length }})</div>
+    <div class="table-responsive">
+        <table class="table table-striped table-bordered align-middle mb-0">
+            <thead class="table-light">
+                <tr><th>Data</th><th>Serviço / observação</th><th>Chapa</th><th class="text-end">Qtd.</th><th class="text-end">Serviços</th><th class="text-end">Entrega</th><th class="text-end">Pagamento</th><th class="text-end">Pgto fatura anterior</th></tr>
+            </thead>
+            <tbody>
+                {% for l in lancamentos %}
+                    {% if l.servicos %}
+                        {% for s in l.servicos %}
+                            <tr>
+                                <td>{{ l.data_lancamento|data_br }}</td>
+                                <td>{{ s.descricao or l.observacao or '—' }}</td>
+                                <td>{{ s.produto_nome or '—' }}</td>
+                                <td class="text-end">{{ s.quantidade }}</td>
+                                <td class="text-end">R$ {{ s.valor|moeda }}</td>
+                                <td class="text-end">{% if loop.first %}R$ {{ l.valor_entrega|moeda }}{% else %}—{% endif %}</td>
+                                <td class="text-end">{% if loop.first %}R$ {{ l.valor_pagamento|moeda }}{% else %}—{% endif %}</td>
+                                <td class="text-end">{% if loop.first %}R$ {{ l.pagamento_fatura_anterior|moeda }}{% else %}—{% endif %}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td>{{ l.data_lancamento|data_br }}</td><td>{{ l.observacao or 'Pagamento / entrega avulsa' }}</td><td>—</td><td class="text-end">—</td><td class="text-end">R$ 0,00</td>
+                            <td class="text-end">R$ {{ l.valor_entrega|moeda }}</td><td class="text-end">R$ {{ l.valor_pagamento|moeda }}</td><td class="text-end">R$ {{ l.pagamento_fatura_anterior|moeda }}</td>
+                        </tr>
+                    {% endif %}
+                {% else %}
+                    <tr><td colspan="8" class="text-center text-muted py-4">Não há lançamentos vinculados a esta fatura.</td></tr>
+                {% endfor %}
+            </tbody>
+            <tfoot class="table-secondary fw-bold">
+                <tr><th colspan="4" class="text-end">Totais:</th><th class="text-end">R$ {{ totais.servicos|moeda }}</th><th class="text-end">R$ {{ totais.entrega|moeda }}</th><th class="text-end">R$ {{ totais.pagamento|moeda }}</th><th class="text-end">R$ {{ totais.pagamento_anterior|moeda }}</th></tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+{% if fatura.status == 'fechada' %}
+<div class="card border-warning mb-4 no-print">
+    <div class="card-header fw-bold text-warning-emphasis"><i class="fas fa-rotate-left me-1"></i>Reabrir para correção</div>
+    <div class="card-body">
+        <p class="small text-muted">A reabertura será registrada na auditoria. Depois de corrigir os lançamentos, feche novamente esta fatura para atualizar o saldo transportado aos meses seguintes.</p>
+        <form method="POST" action="{{ url_for('reabrir_fatura_route', fatura_id=fatura.id) }}" class="row g-2 align-items-end" onsubmit="return confirm('Reabrir esta fatura para correção? A ação ficará registrada na auditoria.');">
+            <div class="col-md-9"><label class="form-label fw-semibold">Motivo da reabertura *</label><input class="form-control" name="motivo" required maxlength="500" placeholder="Ex.: corrigir serviço lançado com valor incorreto"></div>
+            <div class="col-md-3 d-grid"><button class="btn btn-warning fw-bold" type="submit"><i class="fas fa-lock-open me-1"></i>Reabrir fatura</button></div>
+        </form>
+    </div>
+</div>
+{% else %}
+<div class="card border-primary mb-4 no-print">
+    <div class="card-header fw-bold text-primary"><i class="fas fa-check-double me-1"></i>Concluir revisão</div>
+    <div class="card-body">
+        <p class="small text-muted">O fechamento recalcula esta fatura e propaga o saldo atualizado às faturas posteriores. O Caixa e os movimentos de estoque do fechamento não são apagados nem estornados.</p>
+        <form method="POST" action="{{ url_for('fechar_fatura_reaberta_route', fatura_id=fatura.id) }}" class="row g-2 align-items-end" onsubmit="return confirm('Fechar novamente esta fatura e recalcular os saldos dos períodos posteriores?');">
+            <div class="col-md-9"><label class="form-label fw-semibold">Observação da revisão (opcional)</label><input class="form-control" name="motivo" maxlength="500" placeholder="Resumo da correção aplicada"></div>
+            <div class="col-md-3 d-grid"><button class="btn btn-primary fw-bold" type="submit"><i class="fas fa-check me-1"></i>Fechar novamente</button></div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header fw-bold"><i class="fas fa-clipboard-list me-1"></i>Auditoria</div>
+    <div class="card-body">
+        {% for evento in auditoria %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-wrap justify-content-between gap-2">
+                    <strong>{{ evento.acao|replace('_', ' ')|title }}</strong>
+                    <span class="text-muted small">{{ evento.created_at }} — {{ evento.usuario }}</span>
+                </div>
+                {% if evento.motivo %}<div class="mt-1"><strong>Motivo:</strong> {{ evento.motivo }}</div>{% endif %}
+                {% if evento.detalhes_legiveis %}<details class="mt-2"><summary class="small text-muted">Ver detalhes da alteração</summary><pre class="small bg-light border rounded p-2 mt-2 mb-0" style="white-space: pre-wrap; max-height: 360px; overflow: auto;">{{ evento.detalhes_legiveis }}</pre></details>{% endif %}
+            </div>
+        {% else %}
+            <div class="text-muted">Nenhum evento de auditoria registrado.</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

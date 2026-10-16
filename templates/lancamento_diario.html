@@ -209,16 +209,23 @@
                                 <td class="text-end fw-bold">{{ item.quantidade }}</td>
                                 <td class="text-end fw-bold">R$ {{ item.valor | moeda }}</td>
                                 <td class="text-center no-print">
-                                    <button type="button" class="btn btn-sm btn-warning"
-                                            onclick='abrirModalEditarLancamento({{ item.lancamento_obj | tojson }})'
-                                            title="Editar Lançamento">
-                                        <i class="fas fa-edit"></i> Editar
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-danger"
-                                            onclick="confirmarExclusaoLancamento({{ item.lancamento_id }}, {{ item.servico_id or 0 }})"
-                                            title="Apagar Registro">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
+                                    {% if item.lancamento_obj.fatura_id and item.lancamento_obj.fatura_status != 'reaberta' %}
+                                        <span class="badge text-bg-success">Arquivado {{ item.lancamento_obj.fatura_periodo }}</span>
+                                    {% else %}
+                                        {% if item.lancamento_obj.fatura_status == 'reaberta' %}
+                                            <span class="badge text-bg-warning mb-1">Revisão aberta</span><br>
+                                        {% endif %}
+                                        <button type="button" class="btn btn-sm btn-warning"
+                                                onclick='abrirModalEditarLancamento({{ item.lancamento_obj | tojson }})'
+                                                title="Editar Lançamento">
+                                            <i class="fas fa-edit"></i> Editar
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-danger"
+                                                onclick="confirmarExclusaoLancamento({{ item.lancamento_id }}, {{ item.servico_id or 0 }})"
+                                                title="Apagar Registro">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    {% endif %}
                                 </td>
                             </tr>
                         {% endfor %}
@@ -315,7 +322,8 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <form method="POST" action="{{ url_for('virada_mes_route') }}"
-                  onsubmit="return confirm('Confirmar o fechamento até a data de corte escolhida? O sistema criará um backup e apagará/organizará os lançamentos conforme o modo selecionado. Os registros do Caixa serão preservados.');">
+                  onsubmit="return confirm('Arquivar as faturas até a data escolhida? Os detalhes serão preservados para consulta, os lançamentos do período seguinte ficarão independentes e o Caixa/estoque não serão alterados.');">
+                <input type="hidden" name="modo_limpeza" value="manter_apos_corte">
                 <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
                 <div class="modal-header bg-danger text-white">
                     <h5 class="modal-title fw-bold">
@@ -326,32 +334,24 @@
                 <div class="modal-body">
                     <div class="alert alert-info small mb-3">
                         <i class="fas fa-info-circle me-1"></i>
-                        <strong>Como funciona a transição automática:</strong><br>
-                        1. O sistema salva automaticamente uma cópia de segurança do banco atual na pasta <code>backups/</code>.<br>
-                        2. Calcula o saldo até a data de corte (<code>Fatura Anterior - Pagamentos da Fatura Anterior + Serviços + Entregas - Pagamentos do período</code>) e grava o resultado no campo <strong>Fatura Anterior</strong> de cada cliente.<br>
-                        3. Limpa/organiza os lançamentos de serviços conforme o modo selecionado, sem estornar chapas já consumidas, e ajusta a data mínima do Hot Folder.<br>
-                        <strong>O Caixa não é alterado:</strong> receitas, despesas, recebimentos e pagamentos permanecem no histórico e podem ser consultados pelo período na tela Caixa.<br>
-                        <strong>Proteção contra perda:</strong> se houver lançamentos posteriores ao corte que seriam apagados, o fechamento será cancelado; escolha <em>Manter todos os lançamentos após a data de corte</em> para preservá-los.
+                        <strong>Como funciona a virada revisável:</strong><br>
+                        1. O sistema cria um backup de segurança na pasta <code>backups/</code>.<br>
+                        2. Arquiva, por cliente e mês, os lançamentos até a data de corte e recalcula o saldo transportado (<code>Fatura Anterior - Pagamentos da Fatura Anterior + Serviços + Entregas - Pagamentos do período</code>).<br>
+                        3. Lançamentos e serviços arquivados permanecem consultáveis no <strong>Histórico de Faturas</strong>; lançamentos após o corte continuam abertos e independentes.<br>
+                        <strong>Caixa e estoque:</strong> o Caixa é preservado e nenhuma chapa é estornada pelo fechamento.<br>
+                        <strong>Para corrigir:</strong> abra a fatura no histórico, informe o motivo da reabertura, corrija os lançamentos e feche novamente para propagar o novo saldo aos meses seguintes.
                     </div>
                     <div class="row g-3">
-                        <div class="col-md-5">
-                            <label class="form-label fw-bold">Data Final do Mês Anterior (Corte)</label>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Último dia do mês a arquivar (corte)</label>
                             <input type="date" class="form-control" name="data_corte" value="{{ data_corte_default }}" required>
-                            <div class="form-text">Ex: <code>30/09/2026</code> para fechar Setembro e iniciar Outubro (Mês 10).</div>
+                            <div class="form-text">Use o último dia do mês, por exemplo <code>30/09/2026</code>.</div>
                         </div>
-                        <div class="col-md-7">
-                            <label class="form-label fw-bold">O que manter no banco para o novo mês?</label>
-                            <select class="form-select" name="modo_limpeza">
-                                <option value="somente_hotfolder_mes_atual" selected>
-                                    Manter SOMENTE Hot Folder pós-corte (bloqueado se houver lançamentos manuais pós-corte)
-                                </option>
-                                <option value="manter_apos_corte">
-                                    Manter todos os lançamentos (Hot Folder e manuais) após a data de corte
-                                </option>
-                                <option value="limpar_tudo">
-                                    Limpar todos os lançamentos (bloqueado se houver lançamentos após o corte)
-                                </option>
-                            </select>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="alert alert-secondary py-2 mb-0 w-100">
+                                <i class="fas fa-shield-halved me-1"></i>
+                                Nenhum detalhe será excluído. O mês seguinte não será incorporado ao fechamento.
+                            </div>
                         </div>
                     </div>
                 </div>

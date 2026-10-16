@@ -300,6 +300,7 @@ def salvar_lancamento():
             "fatura_anterior": request.form.get("fatura_anterior", "0,00"),
             "pagamento_fatura_anterior": request.form.get("pagamento_fatura_anterior", "0,00"),
             "observacao": request.form.get("observacao", ""),
+            "motivo_correcao": request.form.get("motivo_correcao", ""),
             "servicos": _extrair_servicos_form(request),
         }
         if acao == "atualizar" and request.form.get("id"):
@@ -534,31 +535,48 @@ def produtos_page():
 def relatorios_page():
     if request.method == "POST" and request.form.get("fechar_fatura") == "1":
         cliente_id = request.form.get("cliente_id")
-        data_inicio = request.form.get("data_inicio") or None
-        data_fim = request.form.get("data_fim") or None
+        periodo = (request.form.get("periodo") or "").strip()
+        if not periodo:
+            data_inicio_post = request.form.get("data_inicio") or ""
+            periodo = data_inicio_post[:7] if len(data_inicio_post) >= 7 else ""
+        try:
+            data_inicio, data_fim = database.limites_periodo_fatura(periodo)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("relatorios_page", cliente_id=cliente_id or ""))
         if not cliente_id:
             flash("Selecione um cliente para fechar a fatura.", "danger")
-            return redirect(url_for("relatorios_page"))
+            return redirect(url_for("relatorios_page", periodo=periodo))
         ok, resultado = database.fechar_fatura_cliente(cliente_id, data_inicio, data_fim)
         if ok:
             flash(
-                f"Fatura fechada com sucesso! Saldo devedor de R$ {database.format_money_br(resultado)} "
-                f"transferido para a Fatura Anterior do cliente.",
+                f"Fatura de {periodo} fechada e arquivada sem apagar seus lançamentos. "
+                f"Saldo transportado: R$ {database.format_money_br(resultado)}.",
                 "success",
             )
         else:
-            flash(f"Erro ao fechar fatura: {resultado}", "danger")
-        return redirect(url_for("relatorios_page", cliente_id=cliente_id))
+            flash(f"Não foi possível fechar a fatura: {resultado}", "danger")
+        return redirect(url_for("relatorios_page", cliente_id=cliente_id, periodo=periodo))
 
     clientes = database.listar_clientes()
-    cliente_id = request.values.get("cliente_id", "")
-    data_inicio = request.values.get("data_inicio", "")
-    data_fim = request.values.get("data_fim", "")
-    # Ao escolher um cliente (ou alterar o período), a fatura é exibida automaticamente.
-    fatura_gerada = bool(cliente_id)
+    cliente_id = (request.values.get("cliente_id") or "").strip()
+    periodo = (request.values.get("periodo") or "").strip()
+    data_inicio = (request.values.get("data_inicio") or "").strip()
+    data_fim = (request.values.get("data_fim") or "").strip()
+    if not periodo and data_inicio:
+        periodo = data_inicio[:7]
+    if not periodo:
+        periodo = date.today().strftime("%Y-%m")
+    try:
+        data_inicio, data_fim = database.limites_periodo_fatura(periodo)
+    except ValueError:
+        periodo = date.today().strftime("%Y-%m")
+        data_inicio, data_fim = database.limites_periodo_fatura(periodo)
 
+    fatura_gerada = bool(cliente_id)
     lancamentos = []
     cliente_atual = None
+    fatura_atual = None
     totais = {
         "servicos": 0.0,
         "entrega": 0.0,
@@ -577,47 +595,64 @@ def relatorios_page():
     ultima_data = None
 
     if cliente_id:
-        cliente_atual = database.buscar_cliente(int(cliente_id))
-        filtros = {"cliente_id": int(cliente_id)}
-        if data_inicio:
-            filtros["data_inicio"] = data_inicio
-        if data_fim:
-            filtros["data_fim"] = data_fim
-        lancamentos = database.listar_lancamentos(filtros)
+        try:
+            cliente_atual = database.buscar_cliente(int(cliente_id))
+        except (TypeError, ValueError):
+            cliente_atual = None
 
-        fatura_anterior_cli = float(cliente_atual["fatura_anterior"] or 0.0) if cliente_atual else 0.0
-        pgto_fatura_ant_soma = 0.0
+        if cliente_atual:
+            fatura_atual = database.obter_fatura_periodo(int(cliente_id), periodo)
+            if fatura_atual:
+                lancamentos = database.listar_lancamentos({"fatura_id": fatura_atual["id"]})
+                abertura = float(fatura_atual["saldo_abertura"] or 0.0)
+            else:
+                lancamentos = database.listar_lancamentos(
+                    {
+                        "cliente_id": int(cliente_id),
+                        "data_inicio": data_inicio,
+                        "data_fim": data_fim,
+                        "somente_abertos": True,
+                    }
+                )
+                try:
+                    abertura = database.obter_saldo_abertura_fatura(int(cliente_id), periodo)
+                except (ValueError, TypeError):
+                    abertura = float(cliente_atual["fatura_anterior"] or 0.0)
 
-        for l in lancamentos:
-            dt_l = l["data_lancamento"]
-            if primeira_data is None or dt_l < primeira_data:
-                primeira_data = dt_l
-            if ultima_data is None or dt_l > ultima_data:
-                ultima_data = dt_l
+            pgto_fatura_ant_soma = 0.0
+            for l in lancamentos:
+                dt_l = l["data_lancamento"]
+                if primeira_data is None or dt_l < primeira_data:
+                    primeira_data = dt_l
+                if ultima_data is None or dt_l > ultima_data:
+                    ultima_data = dt_l
 
-            if l.get("observacao") and not l["observacao"].startswith("Auto Hot Folder"):
-                if l["observacao"] not in observacoes_relatorio:
-                    observacoes_relatorio.append(l["observacao"])
+                if l.get("observacao") and not l["observacao"].startswith("Auto Hot Folder"):
+                    if l["observacao"] not in observacoes_relatorio:
+                        observacoes_relatorio.append(l["observacao"])
 
-            for s in l["servicos"]:
-                totais["servicos"] += float(s["valor"] or 0.0)
-                totais["quantidade"] += int(s["quantidade"] or 0)
-                pnome = s.get("produto_nome")
-                if pnome:
-                    produtos_utilizados[pnome] = produtos_utilizados.get(pnome, 0) + int(s["quantidade"] or 0)
+                for servico in l["servicos"]:
+                    totais["servicos"] += float(servico["valor"] or 0.0)
+                    totais["quantidade"] += int(servico["quantidade"] or 0)
+                    produto_nome = servico.get("produto_nome")
+                    if produto_nome:
+                        produtos_utilizados[produto_nome] = (
+                            produtos_utilizados.get(produto_nome, 0)
+                            + int(servico["quantidade"] or 0)
+                        )
 
-            totais["entrega"] += float(l["valor_entrega"] or 0.0)
-            totais["pagamento"] += float(l["valor_pagamento"] or 0.0)
-            pgto_fatura_ant_soma += float(l["pagamento_fatura_anterior"] or 0.0)
+                totais["entrega"] += float(l["valor_entrega"] or 0.0)
+                totais["pagamento"] += float(l["valor_pagamento"] or 0.0)
+                pgto_fatura_ant_soma += float(l["pagamento_fatura_anterior"] or 0.0)
 
-        totais["fatura_anterior"] = fatura_anterior_cli
-        totais["pagamento_fatura_anterior"] = pgto_fatura_ant_soma
-        totais["saldo_fatura_anterior"] = fatura_anterior_cli - pgto_fatura_ant_soma
-        totais["total_fatura"] = totais["servicos"] + totais["entrega"]
-        totais["total_pago"] = totais["pagamento"] + pgto_fatura_ant_soma
-        totais["saldo_devedor"] = (
-            totais["servicos"] + totais["entrega"] - totais["pagamento"]
-        ) + totais["saldo_fatura_anterior"]
+            totais["fatura_anterior"] = float(abertura or 0.0)
+            totais["pagamento_fatura_anterior"] = pgto_fatura_ant_soma
+            totais["saldo_fatura_anterior"] = totais["fatura_anterior"] - pgto_fatura_ant_soma
+            totais["total_fatura"] = totais["servicos"] + totais["entrega"]
+            totais["total_pago"] = totais["pagamento"] + pgto_fatura_ant_soma
+            totais["saldo_devedor"] = (
+                totais["servicos"] + totais["entrega"] - totais["pagamento"]
+            ) + totais["saldo_fatura_anterior"]
 
     produtos_utilizados_ordenados = sorted(produtos_utilizados.items(), key=lambda x: x[0].lower())
 
@@ -627,6 +662,7 @@ def relatorios_page():
         clientes=clientes,
         cliente_id=str(cliente_id),
         cliente_atual=cliente_atual,
+        periodo=periodo,
         data_inicio=data_inicio,
         data_fim=data_fim,
         lancamentos=lancamentos,
@@ -636,11 +672,104 @@ def relatorios_page():
         primeira_data=primeira_data,
         ultima_data=ultima_data,
         fatura_gerada=fatura_gerada,
+        fatura_atual=fatura_atual,
     )
 
 
 # ==============================================================================
-# 6. TELA DEMONSTRATIVO
+# 6. HISTÓRICO E CORREÇÃO CONTROLADA DE FATURAS
+# ==============================================================================
+@app.route("/faturas", methods=["GET"])
+def faturas_page():
+    clientes = database.listar_clientes()
+    cliente_id = (request.args.get("cliente_id") or "").strip()
+    periodo = (request.args.get("periodo") or "").strip()
+    status = (request.args.get("status") or "").strip()
+    faturas = database.listar_faturas_cliente(
+        cliente_id=cliente_id or None,
+        periodo=periodo or None,
+        status=status or None,
+    )
+    return render_template(
+        "faturas.html",
+        active_page="faturas",
+        clientes=clientes,
+        faturas=faturas,
+        cliente_id=cliente_id,
+        periodo=periodo,
+        status=status,
+    )
+
+
+@app.route("/faturas/<int:fatura_id>", methods=["GET"])
+def fatura_detalhe_page(fatura_id):
+    fatura = database.obter_fatura_cliente(fatura_id)
+    if not fatura:
+        return "Fatura não encontrada.", 404
+    lancamentos = database.listar_lancamentos({"fatura_id": fatura_id})
+    totais = {
+        "servicos": 0.0,
+        "entrega": 0.0,
+        "pagamento": 0.0,
+        "pagamento_anterior": 0.0,
+        "quantidade": 0,
+    }
+    for lancamento in lancamentos:
+        for servico in lancamento["servicos"]:
+            totais["servicos"] += float(servico["valor"] or 0.0)
+            totais["quantidade"] += int(servico["quantidade"] or 0)
+        totais["entrega"] += float(lancamento["valor_entrega"] or 0.0)
+        totais["pagamento"] += float(lancamento["valor_pagamento"] or 0.0)
+        totais["pagamento_anterior"] += float(lancamento["pagamento_fatura_anterior"] or 0.0)
+    totais["fatura_anterior"] = float(fatura["saldo_abertura"] or 0.0)
+    totais["saldo_fatura_anterior"] = totais["fatura_anterior"] - totais["pagamento_anterior"]
+    totais["total_fatura"] = totais["servicos"] + totais["entrega"]
+    totais["total_pago"] = totais["pagamento"] + totais["pagamento_anterior"]
+    totais["saldo_fechamento_calculado"] = round(
+        totais["saldo_fatura_anterior"] + totais["total_fatura"] - totais["pagamento"], 2
+    )
+    auditoria = database.listar_auditoria_fatura(fatura_id)
+    for evento in auditoria:
+        try:
+            evento["detalhes_legiveis"] = json.dumps(
+                json.loads(evento.get("detalhes") or "{}"), ensure_ascii=False, indent=2
+            )
+        except (TypeError, ValueError):
+            evento["detalhes_legiveis"] = evento.get("detalhes") or ""
+    return render_template(
+        "fatura_detalhe.html",
+        active_page="faturas",
+        fatura=fatura,
+        lancamentos=lancamentos,
+        totais=totais,
+        auditoria=auditoria,
+    )
+
+
+@app.route("/faturas/<int:fatura_id>/reabrir", methods=["POST"])
+def reabrir_fatura_route(fatura_id):
+    motivo = (request.form.get("motivo") or "").strip()
+    ok, msg = database.reabrir_fatura_cliente(fatura_id, motivo)
+    flash(msg, "success" if ok else "danger")
+    return redirect(url_for("fatura_detalhe_page", fatura_id=fatura_id))
+
+
+@app.route("/faturas/<int:fatura_id>/fechar", methods=["POST"])
+def fechar_fatura_reaberta_route(fatura_id):
+    motivo = (request.form.get("motivo") or "").strip()
+    ok, resultado = database.fechar_fatura_reaberta(fatura_id, motivo)
+    if ok:
+        flash(
+            f"Fatura revisada e fechada novamente. Novo saldo transportado: R$ {database.format_money_br(resultado)}.",
+            "success",
+        )
+    else:
+        flash(f"Não foi possível fechar novamente: {resultado}", "danger")
+    return redirect(url_for("fatura_detalhe_page", fatura_id=fatura_id))
+
+
+# ==============================================================================
+# 7. TELA DEMONSTRATIVO
 # ==============================================================================
 def _calcular_dados_demonstrativo(data_inicio, data_fim, produto_id=None):
     filtros = {
@@ -838,7 +967,7 @@ def exportar_demonstrativo_excel():
 
 
 # ==============================================================================
-# 7. TELA CAIXA (TERCEIRA ALTERAÇÃO - INTEGRADA AO BANCO E SALDOS DE CLIENTES)
+# 8. TELA CAIXA (TERCEIRA ALTERAÇÃO - INTEGRADA AO BANCO E SALDOS DE CLIENTES)
 # ==============================================================================
 @app.route("/caixa", methods=["GET", "POST"])
 def caixa_page():
@@ -936,7 +1065,7 @@ def caixa_page():
 
 
 # ==============================================================================
-# 8. BACKUP (EXPORTAR / IMPORTAR) & CONFIGURAÇÃO HOT FOLDER
+# 9. BACKUP (EXPORTAR / IMPORTAR) & CONFIGURAÇÃO HOT FOLDER
 # ==============================================================================
 @app.route("/configuracoes", methods=["GET", "POST"])
 def configuracoes_page():

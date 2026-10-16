@@ -164,7 +164,7 @@ class DatabaseChangeTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(saldo_cliente, 10192.50)
 
-    def test_individual_invoice_close_transfers_verified_saldo_and_refreshes_remaining_rows(self):
+    def test_individual_invoice_close_archives_details_and_refreshes_open_month_rows(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE clientes SET fatura_anterior = 4310.00 WHERE id = 23")
             cursor = conn.execute(
@@ -197,14 +197,210 @@ class DatabaseChangeTests(unittest.TestCase):
                 "SELECT fatura_anterior FROM clientes WHERE id = 23"
             ).fetchone()[0]
             old_september = conn.execute(
-                "SELECT COUNT(*) FROM lancamentos WHERE cliente_id = 23 AND data_lancamento = '2026-09-30'"
-            ).fetchone()[0]
+                "SELECT id, fatura_id FROM lancamentos WHERE cliente_id = 23 AND data_lancamento = '2026-09-30'"
+            ).fetchone()
+            fatura = conn.execute(
+                "SELECT periodo, status, saldo_abertura, total_servicos, saldo_fechamento FROM faturas_cliente WHERE cliente_id = 23 AND periodo = '2026-09'"
+            ).fetchone()
+            september_service = conn.execute(
+                "SELECT descricao, valor FROM servicos WHERE lancamento_id = ?",
+                (lancamento_id,),
+            ).fetchone()
             remaining_snapshots = conn.execute(
-                "SELECT DISTINCT fatura_anterior, saldo_fatura_anterior FROM lancamentos WHERE cliente_id = 23"
+                "SELECT DISTINCT fatura_anterior, saldo_fatura_anterior FROM lancamentos WHERE cliente_id = 23 AND fatura_id IS NULL"
             ).fetchall()
         self.assertEqual(balance, 8852.50)
-        self.assertEqual(old_september, 0)
-        self.assertEqual([tuple(row) for row in remaining_snapshots], [(8852.50, 8852.50)])
+        self.assertIsNotNone(old_september)
+        self.assertIsNotNone(old_september[1])
+        self.assertEqual(tuple(fatura), ("2026-09", "fechada", 4310.0, 5842.5, 8852.5))
+        self.assertEqual(tuple(september_service), ("Serviços de setembro", 5842.5))
+        self.assertEqual([tuple(row) for row in remaining_snapshots], [(8852.5, 8852.5)])
+
+    def test_archive_preserves_stock_cash_services_and_hotfolder_links(self):
+        produto = database.listar_produtos()[0]
+        stock_before = int(produto["estoque_atual"] or 0)
+        with sqlite3.connect(self.db_path) as conn:
+            cash_before = conn.execute(
+                "SELECT COUNT(*), ROUND(COALESCE(SUM(valor), 0), 2) FROM lancamentos_caixa"
+            ).fetchone()
+            conn.execute("UPDATE clientes SET fatura_anterior = 0 WHERE id = 23")
+
+        lancamento_id = database.criar_lancamento(
+            {
+                "cliente_id": 23,
+                "data_lancamento": "2026-08-12",
+                "fatura_anterior": 0,
+                "servicos": [{
+                    "descricao": "Chapa de teste", "quantidade": 1,
+                    "produto_id": produto["id"], "valor": 12.50,
+                }],
+            }
+        )
+        stock_after_launch = database.buscar_produto(produto["id"])["estoque_atual"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO arquivos_monitorados
+                    (caminho_completo, nome_arquivo, pasta_produto, chave_agrupamento,
+                     cor_detectada, lancamento_id, servico_id, data_lancamento, ignorado)
+                SELECT '/tmp/arquivo-teste-arquivado.ps', 'arquivo-teste-arquivado.ps', 'teste',
+                       'teste-arquivado', 'C', ?, id, '2026-08-12', 0
+                FROM servicos WHERE lancamento_id = ? LIMIT 1
+                """,
+                (lancamento_id, lancamento_id),
+            )
+
+        ok, saldo = database.fechar_fatura_cliente(23, "2026-08-01", "2026-08-31")
+        self.assertTrue(ok, saldo)
+        self.assertEqual(database.buscar_produto(produto["id"])["estoque_atual"], stock_after_launch)
+        hotfolder_monitor.limpar_e_corrigir_registros_monitorados()
+
+        with sqlite3.connect(self.db_path) as conn:
+            archived = conn.execute(
+                "SELECT fatura_id FROM lancamentos WHERE id = ?", (lancamento_id,)
+            ).fetchone()
+            service = conn.execute(
+                "SELECT id, descricao, quantidade, valor FROM servicos WHERE lancamento_id = ?",
+                (lancamento_id,),
+            ).fetchone()
+            monitor = conn.execute(
+                "SELECT lancamento_id, servico_id, ignorado FROM arquivos_monitorados WHERE caminho_completo = '/tmp/arquivo-teste-arquivado.ps'"
+            ).fetchone()
+            cash_after = conn.execute(
+                "SELECT COUNT(*), ROUND(COALESCE(SUM(valor), 0), 2) FROM lancamentos_caixa"
+            ).fetchone()
+        self.assertIsNotNone(archived)
+        self.assertIsNotNone(archived[0])
+        self.assertEqual(tuple(service[1:]), ("Chapa de teste", 1, 12.5))
+        self.assertEqual(tuple(monitor), (lancamento_id, service[0], 1))
+        self.assertEqual(tuple(cash_after), tuple(cash_before))
+        self.assertNotEqual(stock_before, stock_after_launch)
+        payload = database.exportar_backup_json()
+        self.assertIn("faturas_cliente", payload["tabelas"])
+        self.assertIn("faturas_auditoria", payload["tabelas"])
+
+    def test_reopened_invoice_audits_correction_and_recalculates_later_and_open_periods(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE clientes SET fatura_anterior = 4310.00 WHERE id = 23")
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
+                     valor_entrega, valor_pagamento, fatura_anterior,
+                     pagamento_fatura_anterior, saldo_fatura_anterior, observacao)
+                VALUES (23, 'Nordeste', 1, 'manual', '2026-09-30',
+                        130.00, 0.00, 4310.00, 1430.00, 2880.00, 'Fechamento setembro')
+                """
+            )
+            setembro_id = cursor.lastrowid
+            conn.execute(
+                """
+                INSERT INTO servicos
+                    (lancamento_id, produto_id, descricao, quantidade, valor,
+                     cores_detectadas, arquivos_origem, pasta_origem)
+                VALUES (?, NULL, 'Serviços de setembro', 1, 5842.50, '', '[]', '')
+                """,
+                (setembro_id,),
+            )
+
+        novembro_id = database.criar_lancamento(
+            {
+                "cliente_id": 23,
+                "data_lancamento": "2026-11-05",
+                "servicos": [{"descricao": "Serviço de novembro", "quantidade": 1, "valor": 100.00}],
+            }
+        )
+        self.assertTrue(database.fechar_fatura_cliente(23, "2026-09-01", "2026-09-30")[0])
+        ok, saldo_outubro = database.fechar_fatura_cliente(23, "2026-10-01", "2026-10-31")
+        self.assertTrue(ok, saldo_outubro)
+        self.assertEqual(saldo_outubro, 10372.50)
+
+        fatura_setembro = database.obter_fatura_periodo(23, "2026-09")
+        fatura_outubro = database.obter_fatura_periodo(23, "2026-10")
+        self.assertEqual(fatura_setembro["status"], "fechada")
+        self.assertEqual(fatura_outubro["saldo_abertura"], 8852.50)
+
+        ok, mensagem = database.reabrir_fatura_cliente(fatura_setembro["id"], "Corrigir valor do serviço")
+        self.assertTrue(ok, mensagem)
+        lancamento = database.buscar_lancamento(setembro_id)
+        dados = {
+            "cliente_id": 23,
+            "cliente_nome_original": lancamento["cliente_nome_original"],
+            "data_lancamento": lancamento["data_lancamento"],
+            "valor_entrega": lancamento["valor_entrega"],
+            "valor_pagamento": lancamento["valor_pagamento"],
+            "fatura_anterior": lancamento["fatura_anterior"],
+            "pagamento_fatura_anterior": lancamento["pagamento_fatura_anterior"],
+            "observacao": lancamento["observacao"],
+            "motivo_correcao": "Valor confirmado na revisão",
+            "servicos": [{"descricao": "Serviços de setembro", "quantidade": 1, "valor": 6000.00}],
+        }
+        self.assertTrue(database.atualizar_lancamento(setembro_id, dados))
+        ok, novo_saldo_setembro = database.fechar_fatura_reaberta(
+            fatura_setembro["id"], "Correção concluída"
+        )
+        self.assertTrue(ok, novo_saldo_setembro)
+        self.assertEqual(novo_saldo_setembro, 9010.00)
+
+        with sqlite3.connect(self.db_path) as conn:
+            outubro = conn.execute(
+                "SELECT saldo_abertura, saldo_fechamento FROM faturas_cliente WHERE id = ?",
+                (fatura_outubro["id"],),
+            ).fetchone()
+            novembro = conn.execute(
+                "SELECT fatura_anterior, fatura_id FROM lancamentos WHERE id = ?", (novembro_id,)
+            ).fetchone()
+            saldo_cliente = conn.execute(
+                "SELECT fatura_anterior FROM clientes WHERE id = 23"
+            ).fetchone()[0]
+            eventos_setembro = {
+                row[0] for row in conn.execute(
+                    "SELECT acao FROM faturas_auditoria WHERE fatura_id = ?",
+                    (fatura_setembro["id"],),
+                )
+            }
+            evento_propagacao = conn.execute(
+                "SELECT COUNT(*) FROM faturas_auditoria WHERE fatura_id = ? AND acao = 'recalculo_saldo'",
+                (fatura_outubro["id"],),
+            ).fetchone()[0]
+        self.assertEqual(tuple(outubro), (9010.00, 10530.00))
+        self.assertEqual(novembro[0], 10530.00)
+        self.assertIsNone(novembro[1])
+        self.assertEqual(saldo_cliente, 10530.00)
+        self.assertTrue({"reabertura", "edicao_lancamento", "refechamento"}.issubset(eventos_setembro))
+        self.assertGreaterEqual(evento_propagacao, 2)
+
+    def test_closed_invoice_blocks_edit_until_reopened_and_requires_month_range(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE clientes SET fatura_anterior = 0 WHERE id = 23")
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
+                     valor_entrega, valor_pagamento, observacao)
+                VALUES (23, 'Nordeste', 1, 'manual', '2026-09-15', 0, 0, 'Teste fechamento')
+                """
+            )
+            lancamento_id = cursor.lastrowid
+        ok, mensagem = database.fechar_fatura_cliente(23, "2026-09-01", "2026-09-15")
+        self.assertFalse(ok)
+        self.assertIn("mês civil completo", mensagem)
+
+        ok, saldo = database.fechar_fatura_cliente(23, "2026-09-01", "2026-09-30")
+        self.assertTrue(ok, saldo)
+        dados = {
+            "cliente_id": 23,
+            "data_lancamento": "2026-09-15",
+            "valor_entrega": 0,
+            "valor_pagamento": 0,
+            "fatura_anterior": 0,
+            "pagamento_fatura_anterior": 0,
+            "servicos": [],
+        }
+        with self.assertRaisesRegex(ValueError, "Reabra-a"):
+            database.atualizar_lancamento(lancamento_id, dados)
+        with self.assertRaisesRegex(ValueError, "mês já foi arquivado"):
+            database.criar_lancamento(dados)
 
     def test_month_close_transfers_balance_and_preserves_october_data_and_cash(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -238,11 +434,15 @@ class DatabaseChangeTests(unittest.TestCase):
             cash_after = conn.execute(
                 "SELECT COUNT(*), ROUND(COALESCE(SUM(valor), 0), 2) FROM lancamentos_caixa"
             ).fetchone()
+            archived_october = conn.execute(
+                "SELECT COUNT(*) FROM lancamentos WHERE fatura_id IN (SELECT id FROM faturas_cliente WHERE periodo = '2026-10')"
+            ).fetchone()[0]
         self.assertEqual(november_opening, 10372.50)  # 8.852,50 + 1.520,00 de serviços em outubro
-        self.assertEqual(launches_after_october, 0)
+        self.assertEqual(launches_after_october, 67)
+        self.assertEqual(archived_october, 62)  # Cinco não identificados continuam sem fatura de cliente.
         self.assertEqual(cash_after, cash_before)
 
-    def test_hotfolder_only_close_is_blocked_by_post_cut_manual_records(self):
+    def test_month_close_preserves_manual_post_cut_records_instead_of_blocking(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
@@ -257,19 +457,22 @@ class DatabaseChangeTests(unittest.TestCase):
             launches_before = conn.execute("SELECT COUNT(*) FROM lancamentos").fetchone()[0]
 
         ok, message = database.realizar_virada_mes("2026-09-30", "somente_hotfolder_mes_atual")
-        self.assertFalse(ok)
-        self.assertIn("lançamento(s) manual(is) posterior(es)", message)
-        self.assertIn("Nenhum dado foi alterado", message)
-        self.assertEqual(os.listdir(self.backup_dir), [])
+        self.assertTrue(ok, message)
+        self.assertIn("preservados no histórico", message)
+        self.assertTrue(os.listdir(self.backup_dir))
 
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM lancamentos").fetchone()[0], launches_before)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM lancamentos WHERE observacao = 'Lançamento manual de teste'").fetchone()[0],
+                1,
+            )
             self.assertEqual(
                 conn.execute("SELECT fatura_anterior FROM clientes WHERE id = 23").fetchone()[0],
                 8852.50,
             )
 
-    def test_destructive_close_is_blocked_when_new_month_records_exist(self):
+    def test_legacy_clear_all_mode_archives_without_deleting_current_month_or_cash(self):
         with sqlite3.connect(self.db_path) as conn:
             balance_before = conn.execute(
                 "SELECT fatura_anterior FROM clientes WHERE id = 23"
@@ -280,10 +483,9 @@ class DatabaseChangeTests(unittest.TestCase):
             ).fetchone()
 
         ok, message = database.realizar_virada_mes("2026-09-30", "limpar_tudo")
-        self.assertFalse(ok)
-        self.assertIn("Virada cancelada", message)
-        self.assertIn("Nenhum dado foi alterado", message)
-        self.assertEqual(os.listdir(self.backup_dir), [])
+        self.assertTrue(ok, message)
+        self.assertIn("preservados no histórico", message)
+        self.assertTrue(os.listdir(self.backup_dir))
 
         with sqlite3.connect(self.db_path) as conn:
             balance_after = conn.execute(

@@ -3,6 +3,7 @@ import re
 import json
 import shutil
 import sqlite3
+import calendar
 from datetime import datetime, date, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -137,6 +138,7 @@ def init_db():
             fatura_anterior REAL DEFAULT 0.0,
             pagamento_fatura_anterior REAL DEFAULT 0.0,
             saldo_fatura_anterior REAL DEFAULT 0.0,
+            fatura_id INTEGER NULL,
             observacao TEXT DEFAULT '',
             data_registro TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE RESTRICT ON UPDATE CASCADE
@@ -159,6 +161,40 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_servico_lancamento ON servicos(lancamento_id);
         CREATE INDEX IF NOT EXISTS idx_servico_produto ON servicos(produto_id);
+
+        CREATE TABLE IF NOT EXISTS faturas_cliente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            periodo TEXT NOT NULL,
+            data_inicio TEXT NOT NULL,
+            data_fim TEXT NOT NULL,
+            saldo_abertura REAL NOT NULL DEFAULT 0.0,
+            total_servicos REAL NOT NULL DEFAULT 0.0,
+            total_entrega REAL NOT NULL DEFAULT 0.0,
+            total_pagamento REAL NOT NULL DEFAULT 0.0,
+            total_pagamento_fatura_anterior REAL NOT NULL DEFAULT 0.0,
+            saldo_fechamento REAL NOT NULL DEFAULT 0.0,
+            status TEXT NOT NULL DEFAULT 'fechada' CHECK (status IN ('fechada', 'reaberta')),
+            data_fechamento TEXT,
+            data_reabertura TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (cliente_id, periodo),
+            FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE RESTRICT ON UPDATE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_fatura_cliente_periodo ON faturas_cliente(cliente_id, periodo);
+        CREATE INDEX IF NOT EXISTS idx_fatura_status ON faturas_cliente(status);
+
+        CREATE TABLE IF NOT EXISTS faturas_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fatura_id INTEGER NOT NULL,
+            acao TEXT NOT NULL,
+            usuario TEXT NOT NULL DEFAULT 'sistema',
+            motivo TEXT DEFAULT '',
+            detalhes TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (fatura_id) REFERENCES faturas_cliente(id) ON DELETE RESTRICT ON UPDATE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_fatura_auditoria_fatura ON faturas_auditoria(fatura_id, id);
 
         CREATE TABLE IF NOT EXISTS arquivos_monitorados (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,6 +240,11 @@ def init_db():
     colunas_clientes = {row["name"] for row in cur.execute("PRAGMA table_info(clientes)").fetchall()}
     if "cnpj" not in colunas_clientes:
         cur.execute("ALTER TABLE clientes ADD COLUMN cnpj TEXT DEFAULT ''")
+
+    colunas_lancamentos = {row["name"] for row in cur.execute("PRAGMA table_info(lancamentos)").fetchall()}
+    if "fatura_id" not in colunas_lancamentos:
+        cur.execute("ALTER TABLE lancamentos ADD COLUMN fatura_id INTEGER NULL")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lancamento_fatura ON lancamentos(fatura_id)")
 
     # Configurações padrão
     default_hotfolder_local = os.path.join(BASE_DIR, "hotfolder_output")
@@ -743,6 +784,504 @@ def _sincronizar_pagamento_caixa(conn, lancamento_id, cliente_id, data_lancament
         )
 
 
+def limites_periodo_fatura(periodo):
+    """Retorna os limites ISO de um período mensal YYYY-MM validado."""
+    periodo = str(periodo or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}", periodo):
+        raise ValueError("O período da fatura deve estar no formato AAAA-MM.")
+    ano, mes = (int(p) for p in periodo.split("-"))
+    try:
+        ultimo_dia = calendar.monthrange(ano, mes)[1]
+        inicio = date(ano, mes, 1).isoformat()
+        fim = date(ano, mes, ultimo_dia).isoformat()
+    except ValueError as exc:
+        raise ValueError("O período informado não é um mês válido.") from exc
+    return inicio, fim
+
+
+def _periodo_mensal_de_intervalo(data_inicio, data_fim):
+    if not data_inicio or not data_fim:
+        raise ValueError("Informe o mês completo da fatura (data inicial e final).")
+    inicio = parse_date_iso(data_inicio)
+    fim = parse_date_iso(data_fim)
+    try:
+        dt_inicio = date.fromisoformat(inicio)
+        dt_fim = date.fromisoformat(fim)
+    except ValueError as exc:
+        raise ValueError("As datas da fatura são inválidas.") from exc
+    periodo = dt_inicio.strftime("%Y-%m")
+    mes_inicio, mes_fim = limites_periodo_fatura(periodo)
+    if inicio != mes_inicio or fim != mes_fim:
+        raise ValueError("O fechamento precisa corresponder ao mês civil completo, do primeiro ao último dia.")
+    return periodo, inicio, fim
+
+
+def _obter_fatura_periodo_conn(conn, cliente_id, periodo):
+    row = conn.execute(
+        "SELECT * FROM faturas_cliente WHERE cliente_id = ? AND periodo = ?",
+        (int(cliente_id), str(periodo)),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _resolver_fatura_lancamento_conn(conn, cliente_id, data_lancamento, fatura_existente_id=None):
+    """Impede alterações em mês fechado e vincula lançamentos feitos durante reabertura."""
+    cliente_id = int(cliente_id) if cliente_id not in (None, "") else None
+    data_lancamento = parse_date_iso(data_lancamento)
+    if fatura_existente_id:
+        fatura = conn.execute(
+            "SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura_existente_id),)
+        ).fetchone()
+        if not fatura:
+            raise ValueError("A fatura vinculada a este lançamento não foi encontrada.")
+        if fatura["status"] != "reaberta":
+            raise ValueError("Esta fatura está fechada. Reabra-a pelo histórico antes de corrigir lançamentos.")
+        if (
+            cliente_id != int(fatura["cliente_id"])
+            or not (fatura["data_inicio"] <= data_lancamento <= fatura["data_fim"])
+        ):
+            raise ValueError("Um lançamento arquivado só pode permanecer no cliente e mês de origem.")
+        return int(fatura["id"]), float(fatura["saldo_abertura"] or 0.0)
+
+    if cliente_id is None:
+        return None, None
+    fatura = conn.execute(
+        "SELECT * FROM faturas_cliente WHERE cliente_id = ? AND periodo = ?",
+        (cliente_id, data_lancamento[:7]),
+    ).fetchone()
+    if not fatura:
+        return None, None
+    if fatura["status"] != "reaberta":
+        raise ValueError("Este mês já foi arquivado. Reabra a fatura antes de incluir ou corrigir lançamentos.")
+    return int(fatura["id"]), float(fatura["saldo_abertura"] or 0.0)
+
+
+def _snapshot_lancamento_conn(conn, lancamento_id):
+    row = conn.execute("SELECT * FROM lancamentos WHERE id = ?", (int(lancamento_id),)).fetchone()
+    if not row:
+        return None
+    snapshot = dict(row)
+    servicos = conn.execute(
+        "SELECT * FROM servicos WHERE lancamento_id = ? ORDER BY id",
+        (int(lancamento_id),),
+    ).fetchall()
+    snapshot["servicos"] = [dict(s) for s in servicos]
+    return snapshot
+
+
+def _registrar_auditoria_fatura_conn(conn, fatura_id, acao, usuario="sistema", motivo="", detalhes=None):
+    conn.execute(
+        """
+        INSERT INTO faturas_auditoria (fatura_id, acao, usuario, motivo, detalhes)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            int(fatura_id),
+            str(acao),
+            (str(usuario or "sistema").strip() or "sistema"),
+            str(motivo or "").strip(),
+            json.dumps(detalhes or {}, ensure_ascii=False, default=str),
+        ),
+    )
+
+
+def _totais_fatura_conn(conn, fatura_id):
+    row_l = conn.execute(
+        """
+        SELECT COALESCE(SUM(valor_entrega), 0) AS entrega,
+               COALESCE(SUM(valor_pagamento), 0) AS pagamento,
+               COALESCE(SUM(pagamento_fatura_anterior), 0) AS pagamento_anterior
+        FROM lancamentos WHERE fatura_id = ?
+        """,
+        (int(fatura_id),),
+    ).fetchone()
+    row_s = conn.execute(
+        """
+        SELECT COALESCE(SUM(s.valor), 0) AS servicos
+        FROM servicos s
+        JOIN lancamentos l ON l.id = s.lancamento_id
+        WHERE l.fatura_id = ?
+        """,
+        (int(fatura_id),),
+    ).fetchone()
+    return {
+        "servicos": round(float(row_s["servicos"] or 0.0), 2),
+        "entrega": round(float(row_l["entrega"] or 0.0), 2),
+        "pagamento": round(float(row_l["pagamento"] or 0.0), 2),
+        "pagamento_anterior": round(float(row_l["pagamento_anterior"] or 0.0), 2),
+    }
+
+
+def _recalcular_faturas_cliente_conn(conn, cliente_id, periodo_origem=None):
+    """Recalcula, em ordem cronológica, o saldo transportado por todas as faturas."""
+    faturas = conn.execute(
+        "SELECT * FROM faturas_cliente WHERE cliente_id = ? ORDER BY periodo, id",
+        (int(cliente_id),),
+    ).fetchall()
+    if not faturas:
+        return None
+
+    saldo_anterior = None
+    for indice, fatura in enumerate(faturas):
+        saldo_abertura = (
+            float(fatura["saldo_abertura"] or 0.0)
+            if indice == 0
+            else float(saldo_anterior or 0.0)
+        )
+        totais = _totais_fatura_conn(conn, fatura["id"])
+        saldo_fatura_anterior = saldo_abertura - totais["pagamento_anterior"]
+        saldo_fechamento = round(
+            saldo_fatura_anterior
+            + totais["servicos"]
+            + totais["entrega"]
+            - totais["pagamento"],
+            2,
+        )
+        conn.execute(
+            """
+            UPDATE faturas_cliente
+            SET saldo_abertura = ?, total_servicos = ?, total_entrega = ?,
+                total_pagamento = ?, total_pagamento_fatura_anterior = ?,
+                saldo_fechamento = ?
+            WHERE id = ?
+            """,
+            (
+                round(saldo_abertura, 2),
+                totais["servicos"],
+                totais["entrega"],
+                totais["pagamento"],
+                totais["pagamento_anterior"],
+                saldo_fechamento,
+                int(fatura["id"]),
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE lancamentos
+            SET fatura_anterior = ?,
+                saldo_fatura_anterior = ? - COALESCE(pagamento_fatura_anterior, 0.0)
+            WHERE fatura_id = ?
+            """,
+            (round(saldo_abertura, 2), round(saldo_abertura, 2), int(fatura["id"])),
+        )
+        valores_antes = dict(fatura)
+        mudou_saldo = any(
+            abs(float(valores_antes.get(coluna) or 0.0) - valor_novo) >= 0.005
+            for coluna, valor_novo in (
+                ("saldo_abertura", round(saldo_abertura, 2)),
+                ("total_servicos", totais["servicos"]),
+                ("total_entrega", totais["entrega"]),
+                ("total_pagamento", totais["pagamento"]),
+                ("total_pagamento_fatura_anterior", totais["pagamento_anterior"]),
+                ("saldo_fechamento", saldo_fechamento),
+            )
+        )
+        if indice > 0 and mudou_saldo:
+            valores_depois = conn.execute(
+                "SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura["id"]),)
+            ).fetchone()
+            _registrar_auditoria_fatura_conn(
+                conn,
+                int(fatura["id"]),
+                "recalculo_saldo",
+                "sistema",
+                f"Saldo propagado após fechamento de {periodo_origem or 'período anterior'}.",
+                {"antes": valores_antes, "depois": dict(valores_depois)},
+            )
+        saldo_anterior = saldo_fechamento
+
+    saldo_final = round(float(saldo_anterior or 0.0), 2)
+    conn.execute(
+        "UPDATE clientes SET fatura_anterior = ? WHERE id = ?",
+        (saldo_final, int(cliente_id)),
+    )
+    # Os lançamentos ainda abertos passam a exibir o saldo efetivamente transportado,
+    # sem misturar detalhes arquivados com os do novo mês.
+    conn.execute(
+        """
+        UPDATE lancamentos
+        SET fatura_anterior = ?,
+            saldo_fatura_anterior = ? - COALESCE(pagamento_fatura_anterior, 0.0)
+        WHERE cliente_id = ?
+          AND fatura_id IS NULL
+          AND data_lancamento > (
+              SELECT MAX(f.data_fim) FROM faturas_cliente f WHERE f.cliente_id = ?
+          )
+        """,
+        (saldo_final, saldo_final, int(cliente_id), int(cliente_id)),
+    )
+    return saldo_final
+
+
+def _saldo_abertura_novo_periodo_conn(conn, cliente_id, periodo):
+    anterior = conn.execute(
+        """
+        SELECT periodo, saldo_fechamento, status
+        FROM faturas_cliente
+        WHERE cliente_id = ? AND periodo < ?
+        ORDER BY periodo DESC LIMIT 1
+        """,
+        (int(cliente_id), str(periodo)),
+    ).fetchone()
+    if anterior:
+        if anterior["status"] == "reaberta":
+            raise ValueError(
+                f"A fatura de {anterior['periodo']} está reaberta; feche-a antes de fechar um período posterior."
+            )
+        return round(float(anterior["saldo_fechamento"] or 0.0), 2)
+
+    posterior = conn.execute(
+        "SELECT periodo FROM faturas_cliente WHERE cliente_id = ? AND periodo > ? LIMIT 1",
+        (int(cliente_id), str(periodo)),
+    ).fetchone()
+    if posterior:
+        raise ValueError(
+            f"Não é possível criar {periodo} depois da fatura arquivada de {posterior['periodo']}. "
+            "Reabra a fatura existente para corrigir o histórico."
+        )
+    data_inicio, data_fim = limites_periodo_fatura(periodo)
+    snapshot = conn.execute(
+        """
+        SELECT fatura_anterior FROM lancamentos
+        WHERE cliente_id = ? AND data_lancamento BETWEEN ? AND ? AND fatura_id IS NULL
+        ORDER BY data_lancamento, id LIMIT 1
+        """,
+        (int(cliente_id), data_inicio, data_fim),
+    ).fetchone()
+    if snapshot and snapshot["fatura_anterior"] is not None:
+        return round(float(snapshot["fatura_anterior"] or 0.0), 2)
+    cliente = conn.execute(
+        "SELECT fatura_anterior FROM clientes WHERE id = ?", (int(cliente_id),)
+    ).fetchone()
+    if not cliente:
+        raise ValueError("Cliente não encontrado.")
+    return round(float(cliente["fatura_anterior"] or 0.0), 2)
+
+
+def _fechar_fatura_periodo_conn(conn, cliente_id, periodo, motivo="", usuario="sistema"):
+    cliente_id = int(cliente_id)
+    periodo = str(periodo)
+    data_inicio, data_fim = limites_periodo_fatura(periodo)
+    fatura = conn.execute(
+        "SELECT * FROM faturas_cliente WHERE cliente_id = ? AND periodo = ?",
+        (cliente_id, periodo),
+    ).fetchone()
+
+    if fatura and fatura["status"] == "fechada":
+        novos = conn.execute(
+            """
+            SELECT COUNT(*) FROM lancamentos
+            WHERE cliente_id = ? AND data_lancamento BETWEEN ? AND ? AND fatura_id IS NULL
+            """,
+            (cliente_id, data_inicio, data_fim),
+        ).fetchone()[0]
+        if novos:
+            return False, f"Há {novos} lançamento(s) novo(s) em {periodo}; reabra a fatura para incorporá-los."
+        return False, f"A fatura de {periodo} já está fechada. Reabra-a para corrigir os dados."
+
+    if fatura:
+        fatura_id = int(fatura["id"])
+        antes = dict(fatura)
+        conn.execute(
+            """
+            UPDATE lancamentos SET fatura_id = ?
+            WHERE cliente_id = ? AND data_lancamento BETWEEN ? AND ? AND fatura_id IS NULL
+            """,
+            (fatura_id, cliente_id, data_inicio, data_fim),
+        )
+        conn.execute(
+            "UPDATE arquivos_monitorados SET ignorado = 1 WHERE lancamento_id IN (SELECT id FROM lancamentos WHERE fatura_id = ?)",
+            (fatura_id,),
+        )
+        conn.execute(
+            "UPDATE faturas_cliente SET status = 'fechada', data_fechamento = ? WHERE id = ?",
+            (datetime.now().isoformat(timespec="seconds"), fatura_id),
+        )
+        saldo = _recalcular_faturas_cliente_conn(conn, cliente_id, periodo_origem=periodo)
+        depois = conn.execute("SELECT * FROM faturas_cliente WHERE id = ?", (fatura_id,)).fetchone()
+        _registrar_auditoria_fatura_conn(
+            conn,
+            fatura_id,
+            "refechamento",
+            usuario,
+            motivo,
+            {"antes": antes, "depois": dict(depois)},
+        )
+        return True, float(depois["saldo_fechamento"] or saldo or 0.0)
+
+    lancamentos = conn.execute(
+        """
+        SELECT id FROM lancamentos
+        WHERE cliente_id = ? AND data_lancamento BETWEEN ? AND ? AND fatura_id IS NULL
+        ORDER BY data_lancamento, id
+        """,
+        (cliente_id, data_inicio, data_fim),
+    ).fetchall()
+    if not lancamentos:
+        return False, "Nenhum lançamento aberto encontrado para o cliente nesse mês."
+
+    saldo_abertura = _saldo_abertura_novo_periodo_conn(conn, cliente_id, periodo)
+    agora = datetime.now().isoformat(timespec="seconds")
+    cur = conn.execute(
+        """
+        INSERT INTO faturas_cliente
+            (cliente_id, periodo, data_inicio, data_fim, saldo_abertura, status, data_fechamento)
+        VALUES (?, ?, ?, ?, ?, 'fechada', ?)
+        """,
+        (cliente_id, periodo, data_inicio, data_fim, saldo_abertura, agora),
+    )
+    fatura_id = int(cur.lastrowid)
+    conn.execute(
+        """
+        UPDATE lancamentos SET fatura_id = ?
+        WHERE cliente_id = ? AND data_lancamento BETWEEN ? AND ? AND fatura_id IS NULL
+        """,
+        (fatura_id, cliente_id, data_inicio, data_fim),
+    )
+    conn.execute(
+        "UPDATE arquivos_monitorados SET ignorado = 1 WHERE lancamento_id IN (SELECT id FROM lancamentos WHERE fatura_id = ?)",
+        (fatura_id,),
+    )
+    saldo = _recalcular_faturas_cliente_conn(conn, cliente_id, periodo_origem=periodo)
+    fatura_final = conn.execute("SELECT * FROM faturas_cliente WHERE id = ?", (fatura_id,)).fetchone()
+    _registrar_auditoria_fatura_conn(
+        conn,
+        fatura_id,
+        "fechamento",
+        usuario,
+        motivo,
+        {"saldo_abertura": saldo_abertura, "fatura": dict(fatura_final)},
+    )
+    return True, float(fatura_final["saldo_fechamento"] or saldo or 0.0)
+
+
+def listar_faturas_cliente(cliente_id=None, periodo=None, status=None):
+    conn = get_db_connection()
+    conditions = []
+    params = []
+    if cliente_id:
+        conditions.append("f.cliente_id = ?")
+        params.append(int(cliente_id))
+    if periodo:
+        conditions.append("f.periodo = ?")
+        params.append(str(periodo))
+    if status in ("fechada", "reaberta"):
+        conditions.append("f.status = ?")
+        params.append(status)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    rows = conn.execute(
+        f"""
+        SELECT f.*, c.nome AS cliente_nome,
+               (SELECT COUNT(*) FROM lancamentos l WHERE l.fatura_id = f.id) AS quantidade_lancamentos
+        FROM faturas_cliente f
+        JOIN clientes c ON c.id = f.cliente_id
+        {where}
+        ORDER BY f.periodo DESC, c.nome COLLATE NOCASE
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def obter_fatura_cliente(fatura_id):
+    conn = get_db_connection()
+    row = conn.execute(
+        """
+        SELECT f.*, c.nome AS cliente_nome
+        FROM faturas_cliente f
+        JOIN clientes c ON c.id = f.cliente_id
+        WHERE f.id = ?
+        """,
+        (int(fatura_id),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def obter_fatura_periodo(cliente_id, periodo):
+    conn = get_db_connection()
+    fatura = _obter_fatura_periodo_conn(conn, cliente_id, periodo)
+    if fatura:
+        cliente = conn.execute("SELECT nome FROM clientes WHERE id = ?", (int(cliente_id),)).fetchone()
+        fatura["cliente_nome"] = cliente["nome"] if cliente else ""
+    conn.close()
+    return fatura
+
+
+def listar_auditoria_fatura(fatura_id):
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM faturas_auditoria WHERE fatura_id = ? ORDER BY id DESC",
+        (int(fatura_id),),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def obter_saldo_abertura_fatura(cliente_id, periodo):
+    conn = get_db_connection()
+    try:
+        saldo = _saldo_abertura_novo_periodo_conn(conn, int(cliente_id), str(periodo))
+        return saldo
+    finally:
+        conn.close()
+
+
+def reabrir_fatura_cliente(fatura_id, motivo, usuario="sistema"):
+    motivo = str(motivo or "").strip()
+    if not motivo:
+        return False, "Informe o motivo da reabertura para registrar a auditoria."
+    conn = get_db_connection()
+    try:
+        with conn:
+            fatura = conn.execute("SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura_id),)).fetchone()
+            if not fatura:
+                return False, "Fatura não encontrada."
+            if fatura["status"] == "reaberta":
+                return False, "Esta fatura já está reaberta."
+            antes = dict(fatura)
+            agora = datetime.now().isoformat(timespec="seconds")
+            conn.execute(
+                "UPDATE faturas_cliente SET status = 'reaberta', data_reabertura = ? WHERE id = ?",
+                (agora, int(fatura_id)),
+            )
+            _registrar_auditoria_fatura_conn(
+                conn,
+                fatura_id,
+                "reabertura",
+                usuario,
+                motivo,
+                {"antes": antes, "depois": "reaberta"},
+            )
+        return True, "Fatura reaberta. Os lançamentos só poderão ser corrigidos dentro do cliente e mês arquivados."
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        conn.close()
+
+
+def fechar_fatura_reaberta(fatura_id, motivo="", usuario="sistema"):
+    conn = get_db_connection()
+    try:
+        with conn:
+            fatura = conn.execute("SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura_id),)).fetchone()
+            if not fatura:
+                return False, "Fatura não encontrada."
+            if fatura["status"] != "reaberta":
+                return False, "A fatura não está reaberta."
+            ok, resultado = _fechar_fatura_periodo_conn(
+                conn, fatura["cliente_id"], fatura["periodo"], motivo, usuario
+            )
+            if not ok:
+                raise ValueError(resultado)
+        return True, resultado
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        conn.close()
+
+
 def criar_lancamento(dados):
     conn = get_db_connection()
     try:
@@ -761,6 +1300,11 @@ def criar_lancamento(dados):
             valor_pagamento = parse_money(dados.get("valor_pagamento", 0))
             fatura_anterior = parse_money(dados.get("fatura_anterior", 0))
             pagamento_fatura_anterior = parse_money(dados.get("pagamento_fatura_anterior", 0))
+            fatura_id, saldo_abertura_fatura = _resolver_fatura_lancamento_conn(
+                conn, cliente_id, data_lancamento
+            )
+            if saldo_abertura_fatura is not None:
+                fatura_anterior = saldo_abertura_fatura
             saldo_fatura_anterior = fatura_anterior - pagamento_fatura_anterior
             observacao = (dados.get("observacao") or "").strip()
 
@@ -769,8 +1313,8 @@ def criar_lancamento(dados):
                 INSERT INTO lancamentos
                 (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
                  valor_entrega, valor_pagamento, fatura_anterior, pagamento_fatura_anterior,
-                 saldo_fatura_anterior, observacao)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 saldo_fatura_anterior, fatura_id, observacao)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cliente_id,
@@ -783,6 +1327,7 @@ def criar_lancamento(dados):
                     fatura_anterior,
                     pagamento_fatura_anterior,
                     saldo_fatura_anterior,
+                    fatura_id,
                     observacao,
                 ),
             )
@@ -836,6 +1381,18 @@ def criar_lancamento(dados):
                 valor_pagamento,
                 pagamento_fatura_anterior,
             )
+            if fatura_id:
+                _registrar_auditoria_fatura_conn(
+                    conn,
+                    fatura_id,
+                    "inclusao_lancamento",
+                    dados.get("usuario", "sistema"),
+                    dados.get("motivo_correcao", ""),
+                    {
+                        "lancamento_id": lancamento_id,
+                        "depois": _snapshot_lancamento_conn(conn, lancamento_id),
+                    },
+                )
         conn.close()
         return lancamento_id
     except Exception as e:
@@ -869,8 +1426,14 @@ def atualizar_lancamento(lancamento_id, dados):
             valor_pagamento = parse_money(dados.get("valor_pagamento", 0))
             fatura_anterior = parse_money(dados.get("fatura_anterior", 0))
             pagamento_fatura_anterior = parse_money(dados.get("pagamento_fatura_anterior", 0))
+            fatura_id, saldo_abertura_fatura = _resolver_fatura_lancamento_conn(
+                conn, cliente_id, data_lancamento, old_lanc["fatura_id"]
+            )
+            if saldo_abertura_fatura is not None:
+                fatura_anterior = saldo_abertura_fatura
             saldo_fatura_anterior = fatura_anterior - pagamento_fatura_anterior
             observacao = (dados.get("observacao") or "").strip()
+            snapshot_antes = _snapshot_lancamento_conn(conn, lancamento_id) if fatura_id else None
 
             conn.execute(
                 """
@@ -884,6 +1447,7 @@ def atualizar_lancamento(lancamento_id, dados):
                     fatura_anterior = ?,
                     pagamento_fatura_anterior = ?,
                     saldo_fatura_anterior = ?,
+                    fatura_id = ?,
                     observacao = ?
                 WHERE id = ?
                 """,
@@ -897,6 +1461,7 @@ def atualizar_lancamento(lancamento_id, dados):
                     fatura_anterior,
                     pagamento_fatura_anterior,
                     saldo_fatura_anterior,
+                    fatura_id,
                     observacao,
                     lancamento_id,
                 ),
@@ -968,6 +1533,19 @@ def atualizar_lancamento(lancamento_id, dados):
                 valor_pagamento,
                 pagamento_fatura_anterior,
             )
+            if fatura_id:
+                _registrar_auditoria_fatura_conn(
+                    conn,
+                    fatura_id,
+                    "edicao_lancamento",
+                    dados.get("usuario", "sistema"),
+                    dados.get("motivo_correcao", ""),
+                    {
+                        "lancamento_id": lancamento_id,
+                        "antes": snapshot_antes,
+                        "depois": _snapshot_lancamento_conn(conn, lancamento_id),
+                    },
+                )
         conn.close()
         return True
     except Exception as e:
@@ -977,53 +1555,76 @@ def atualizar_lancamento(lancamento_id, dados):
 
 def atribuir_cliente_lancamento(lancamento_id, cliente_id, salvar_apelido=False):
     conn = get_db_connection()
-    with conn:
-        lanc = conn.execute(
-            "SELECT * FROM lancamentos WHERE id = ?", (int(lancamento_id),)
-        ).fetchone()
-        cli = conn.execute(
-            "SELECT * FROM clientes WHERE id = ?", (int(cliente_id),)
-        ).fetchone()
-        if not lanc or not cli:
-            conn.close()
-            return False
+    try:
+        with conn:
+            lanc = conn.execute(
+                "SELECT * FROM lancamentos WHERE id = ?", (int(lancamento_id),)
+            ).fetchone()
+            cli = conn.execute(
+                "SELECT * FROM clientes WHERE id = ?", (int(cliente_id),)
+            ).fetchone()
+            if not lanc or not cli:
+                return False
 
-        fatura_anterior = float(cli["fatura_anterior"] or 0.0)
-        pgto_ant = float(lanc["pagamento_fatura_anterior"] or 0.0)
-        saldo_ant = fatura_anterior - pgto_ant
+            fatura_id, saldo_abertura = _resolver_fatura_lancamento_conn(
+                conn, int(cliente_id), lanc["data_lancamento"], lanc["fatura_id"]
+            )
+            snapshot_antes = _snapshot_lancamento_conn(conn, lancamento_id) if fatura_id else None
+            fatura_anterior = (
+                float(saldo_abertura)
+                if saldo_abertura is not None
+                else float(cli["fatura_anterior"] or 0.0)
+            )
+            pgto_ant = float(lanc["pagamento_fatura_anterior"] or 0.0)
+            saldo_ant = fatura_anterior - pgto_ant
 
-        conn.execute(
-            """
-            UPDATE lancamentos
-            SET cliente_id = ?,
-                identificado = 1,
-                fatura_anterior = CASE WHEN fatura_anterior = 0 THEN ? ELSE fatura_anterior END,
-                saldo_fatura_anterior = CASE WHEN fatura_anterior = 0 THEN ? ELSE saldo_fatura_anterior END
-            WHERE id = ?
-            """,
-            (int(cliente_id), fatura_anterior, saldo_ant, int(lancamento_id)),
-        )
+            conn.execute(
+                """
+                UPDATE lancamentos
+                SET cliente_id = ?,
+                    identificado = 1,
+                    fatura_id = ?,
+                    fatura_anterior = ?,
+                    saldo_fatura_anterior = ?
+                WHERE id = ?
+                """,
+                (int(cliente_id), fatura_id, fatura_anterior, saldo_ant, int(lancamento_id)),
+            )
 
-        if salvar_apelido and lanc["cliente_nome_original"]:
-            novo_ap = lanc["cliente_nome_original"].strip().lower()
-            atuais = [a.strip() for a in (cli["apelidos"] or "").split(",") if a.strip()]
-            if novo_ap and novo_ap not in [a.lower() for a in atuais]:
-                atuais.append(novo_ap)
-                conn.execute(
-                    "UPDATE clientes SET apelidos = ? WHERE id = ?",
-                    (", ".join(atuais), int(cliente_id)),
+            if salvar_apelido and lanc["cliente_nome_original"]:
+                novo_ap = lanc["cliente_nome_original"].strip().lower()
+                atuais = [a.strip() for a in (cli["apelidos"] or "").split(",") if a.strip()]
+                if novo_ap and novo_ap not in [a.lower() for a in atuais]:
+                    atuais.append(novo_ap)
+                    conn.execute(
+                        "UPDATE clientes SET apelidos = ? WHERE id = ?",
+                        (", ".join(atuais), int(cliente_id)),
+                    )
+
+            _sincronizar_pagamento_caixa(
+                conn,
+                int(lancamento_id),
+                int(cliente_id),
+                lanc["data_lancamento"],
+                lanc["valor_pagamento"],
+                lanc["pagamento_fatura_anterior"],
+            )
+            if fatura_id:
+                _registrar_auditoria_fatura_conn(
+                    conn,
+                    fatura_id,
+                    "atribuicao_cliente",
+                    "sistema",
+                    "",
+                    {
+                        "lancamento_id": int(lancamento_id),
+                        "antes": snapshot_antes,
+                        "depois": _snapshot_lancamento_conn(conn, lancamento_id),
+                    },
                 )
-
-        _sincronizar_pagamento_caixa(
-            conn,
-            int(lancamento_id),
-            int(cliente_id),
-            lanc["data_lancamento"],
-            lanc["valor_pagamento"],
-            lanc["pagamento_fatura_anterior"],
-        )
-    conn.close()
-    return True
+        return True
+    finally:
+        conn.close()
 
 
 def excluir_lancamento(lancamento_id):
@@ -1031,6 +1632,21 @@ def excluir_lancamento(lancamento_id):
     try:
         with conn:
             lancamento_id = int(lancamento_id)
+            lanc = conn.execute(
+                "SELECT * FROM lancamentos WHERE id = ?", (lancamento_id,)
+            ).fetchone()
+            if not lanc:
+                return False
+            fatura_id = lanc["fatura_id"]
+            if fatura_id:
+                fatura = conn.execute(
+                    "SELECT status FROM faturas_cliente WHERE id = ?", (int(fatura_id),)
+                ).fetchone()
+                if not fatura or fatura["status"] != "reaberta":
+                    return False
+                snapshot_antes = _snapshot_lancamento_conn(conn, lancamento_id)
+            else:
+                snapshot_antes = None
             servicos = conn.execute(
                 "SELECT * FROM servicos WHERE lancamento_id = ?", (lancamento_id,)
             ).fetchall()
@@ -1064,6 +1680,15 @@ def excluir_lancamento(lancamento_id):
             )
             conn.execute("DELETE FROM servicos WHERE lancamento_id = ?", (lancamento_id,))
             conn.execute("DELETE FROM lancamentos WHERE id = ?", (lancamento_id,))
+            if fatura_id:
+                _registrar_auditoria_fatura_conn(
+                    conn,
+                    fatura_id,
+                    "exclusao_lancamento",
+                    "sistema",
+                    "",
+                    {"lancamento_id": lancamento_id, "antes": snapshot_antes, "depois": None},
+                )
         conn.close()
         return True
     except Exception as e:
@@ -1093,6 +1718,18 @@ def excluir_servico_diario(servico_id, lancamento_id=None):
             ).fetchone()
             if serv:
                 lanc_id = serv["lancamento_id"]
+                lanc = conn.execute("SELECT * FROM lancamentos WHERE id = ?", (lanc_id,)).fetchone()
+                fatura_id = lanc["fatura_id"] if lanc else None
+                if fatura_id:
+                    fatura = conn.execute(
+                        "SELECT status FROM faturas_cliente WHERE id = ?", (int(fatura_id),)
+                    ).fetchone()
+                    if not fatura or fatura["status"] != "reaberta":
+                        conn.close()
+                        return False
+                    snapshot_antes = _snapshot_lancamento_conn(conn, lanc_id)
+                else:
+                    snapshot_antes = None
                 qtd_servs = conn.execute(
                     "SELECT COUNT(*) FROM servicos WHERE lancamento_id = ?",
                     (lanc_id,),
@@ -1122,6 +1759,20 @@ def excluir_servico_diario(servico_id, lancamento_id=None):
                         (servico_id,),
                     )
                     conn.execute("DELETE FROM servicos WHERE id = ?", (servico_id,))
+                    if fatura_id:
+                        _registrar_auditoria_fatura_conn(
+                            conn,
+                            fatura_id,
+                            "exclusao_servico",
+                            "sistema",
+                            "",
+                            {
+                                "lancamento_id": lanc_id,
+                                "servico_id": servico_id,
+                                "antes": snapshot_antes,
+                                "depois": _snapshot_lancamento_conn(conn, lanc_id),
+                            },
+                        )
                 conn.close()
                 return True
 
@@ -1139,9 +1790,11 @@ def buscar_lancamento(lancamento_id):
     conn = get_db_connection()
     row = conn.execute(
         """
-        SELECT l.*, COALESCE(c.nome, 'Não Identificado') AS cliente_nome
+        SELECT l.*, COALESCE(c.nome, 'Não Identificado') AS cliente_nome,
+               f.periodo AS fatura_periodo, f.status AS fatura_status
         FROM lancamentos l
         LEFT JOIN clientes c ON l.cliente_id = c.id
+        LEFT JOIN faturas_cliente f ON f.id = l.fatura_id
         WHERE l.id = ?
         """,
         (int(lancamento_id),),
@@ -1176,6 +1829,12 @@ def listar_lancamentos(filtros=None):
     elif filtros.get("cliente_id"):
         conditions.append("l.cliente_id = ?")
         params.append(int(filtros["cliente_id"]))
+
+    if filtros.get("fatura_id"):
+        conditions.append("l.fatura_id = ?")
+        params.append(int(filtros["fatura_id"]))
+    if filtros.get("somente_abertos"):
+        conditions.append("l.fatura_id IS NULL")
 
     if filtros.get("apenas_identificados"):
         conditions.append("l.cliente_id IS NOT NULL")
@@ -1219,9 +1878,11 @@ def listar_lancamentos(filtros=None):
     order_sql = filtros.get("order_by", "l.data_lancamento ASC, l.id ASC")
 
     query = f"""
-        SELECT l.*, COALESCE(c.nome, 'Não Identificado') AS cliente_nome
+        SELECT l.*, COALESCE(c.nome, 'Não Identificado') AS cliente_nome,
+               f.periodo AS fatura_periodo, f.status AS fatura_status
         FROM lancamentos l
         LEFT JOIN clientes c ON l.cliente_id = c.id
+        LEFT JOIN faturas_cliente f ON f.id = l.fatura_id
         {where_sql}
         ORDER BY {order_sql}
     """
@@ -1250,113 +1911,35 @@ def listar_lancamentos(filtros=None):
     return result
 
 
-def fechar_fatura_cliente(cliente_id, data_inicio=None, data_fim=None):
-    """
-    Fecha a fatura do cliente no período:
-    1. Calcula o saldo devedor (serviços + entrega - pagamento + saldo_fatura_anterior).
-    2. Atualiza o campo fatura_anterior do cliente com esse novo saldo devedor.
-    3. Apaga os lançamentos e serviços do período SEM estornar o estoque (pois as chapas foram consumidas).
-    """
-    cliente_id = int(cliente_id)
-    filtros = {"cliente_id": cliente_id}
-    if data_inicio:
-        filtros["data_inicio"] = parse_date_iso(data_inicio)
-    if data_fim:
-        filtros["data_fim"] = parse_date_iso(data_fim)
-
-    lancamentos = listar_lancamentos(filtros)
-    if not lancamentos:
-        return False, "Nenhum lançamento encontrado para o cliente no período informado."
+def fechar_fatura_cliente(cliente_id, data_inicio=None, data_fim=None, motivo="", usuario="sistema"):
+    """Arquiva, sem apagar detalhes, a fatura mensal de um único cliente."""
+    try:
+        cliente_id = int(cliente_id)
+        periodo, _, _ = _periodo_mensal_de_intervalo(data_inicio, data_fim)
+    except (TypeError, ValueError) as exc:
+        return False, str(exc)
 
     conn = get_db_connection()
     try:
-        try:
-            conn.execute("ALTER TABLE arquivos_monitorados ADD COLUMN ignorado INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
         with conn:
-            cli = conn.execute(
-                "SELECT * FROM clientes WHERE id = ?", (cliente_id,)
-            ).fetchone()
-            if not cli:
+            if not conn.execute("SELECT 1 FROM clientes WHERE id = ?", (cliente_id,)).fetchone():
                 return False, "Cliente não encontrado."
-
-            fatura_anterior = float(cli["fatura_anterior"] or 0.0)
-            total_servicos = 0.0
-            total_entrega = 0.0
-            total_pagamento = 0.0
-            total_pagamento_fatura_anterior = 0.0
-
-            ids_para_apagar = []
-            for l in lancamentos:
-                ids_para_apagar.append(l["id"])
-                for s in l["servicos"]:
-                    total_servicos += float(s["valor"] or 0.0)
-                total_entrega += float(l["valor_entrega"] or 0.0)
-                total_pagamento += float(l["valor_pagamento"] or 0.0)
-                total_pagamento_fatura_anterior += float(l["pagamento_fatura_anterior"] or 0.0)
-
-            saldo_fatura_anterior = fatura_anterior - total_pagamento_fatura_anterior
-            saldo_devedor = (total_servicos + total_entrega - total_pagamento) + saldo_fatura_anterior
-
-            conn.execute(
-                "UPDATE clientes SET fatura_anterior = ? WHERE id = ?",
-                (round(saldo_devedor, 2), cliente_id),
+            ok, resultado = _fechar_fatura_periodo_conn(
+                conn, cliente_id, periodo, motivo=motivo, usuario=usuario
             )
-
-            # Marca arquivos monitorados do período como ignorados para não reimportar do Hot Folder
-            placeholders = ",".join("?" for _ in ids_para_apagar)
-            conn.execute(
-                f"UPDATE arquivos_monitorados SET ignorado = 1, lancamento_id = NULL, servico_id = NULL WHERE lancamento_id IN ({placeholders})",
-                ids_para_apagar,
-            )
-            # Apaga os serviços e lançamentos SEM devolver estoque (chapas já foram consumidas)
-            conn.execute(
-                f"DELETE FROM servicos WHERE lancamento_id IN ({placeholders})",
-                ids_para_apagar,
-            )
-            conn.execute(
-                f"DELETE FROM lancamentos WHERE id IN ({placeholders})",
-                ids_para_apagar,
-            )
-
-            # As faturas do período foram incorporadas ao saldo do cliente; alinhe
-            # também os lançamentos que permanecem no novo período para não exibir
-            # nem reaplicar o saldo anterior antigo após o fechamento.
-            saldo_final = round(saldo_devedor, 2)
-            conn.execute(
-                """
-                UPDATE lancamentos
-                SET fatura_anterior = ?,
-                    saldo_fatura_anterior = ? - COALESCE(pagamento_fatura_anterior, 0.0)
-                WHERE cliente_id = ?
-                """,
-                (saldo_final, saldo_final, cliente_id),
-            )
-
+        return ok, resultado
+    except Exception as exc:
+        return False, str(exc)
+    finally:
         conn.close()
-        return True, round(saldo_devedor, 2)
-    except Exception as e:
-        conn.close()
-        return False, str(e)
 
 
 def realizar_virada_mes(data_corte=None, modo_limpeza="somente_hotfolder_mes_atual"):
-    """
-    Realiza a transição (virada de mês) de TODOS os clientes de uma só vez:
-    1. Faz backup automático de segurança do banco atual em backups/.
-    2. Calcula o saldo final de cada cliente até `data_corte`:
-       nova_fatura_anterior = (servicos + entregas - pagamentos)
-                              + (fatura_anterior_cadastrada - pgto_fatura_anterior)
-       e grava esse valor em `clientes.fatura_anterior`, preservando eventual saldo credor.
-    3. Limpa os lançamentos antigos (sem estornar o estoque de chapas já consumidas):
-       - 'somente_hotfolder_mes_atual': limpa todos os lançamentos <= data_corte e qualquer lançamento manual antigo do SQL,
-         mantendo apenas o que o Hot Folder coletou após data_corte (no novo mês).
-       - 'manter_apos_corte': limpa todos os lançamentos <= data_corte e mantém todos os lançamentos (manuais e Hot Folder) após data_corte.
-       - 'limpar_tudo': limpa todos os lançamentos para começar o mês zerado apenas com os saldos em Fatura Anterior.
-    4. Atualiza a data mínima do Hot Folder (hotfolder_data_minima) para o dia seguinte a data_corte,
-       evitando que arquivos antigos de meses anteriores na pasta do RIP sejam coletados.
-    5. Não apaga nem altera `lancamentos_caixa`: o histórico financeiro permanece preservado.
+    """Fecha faturas mensais até o corte e as arquiva sem excluir lançamentos.
+
+    Os modos antigos continuam aceitos para compatibilidade com formulários e
+    instalações existentes, mas já não apagam detalhes. Caixa e estoque não são
+    estornados nem limpos durante o arquivamento.
     """
     if not data_corte:
         data_corte = (date.today().replace(day=1) - timedelta(days=1)).isoformat()
@@ -1368,172 +1951,113 @@ def realizar_virada_mes(data_corte=None, modo_limpeza="somente_hotfolder_mes_atu
     }
     if modo_limpeza not in modos_validos:
         return False, "Modo de fechamento inválido. Nenhum dado foi alterado."
-
-    # Evita somar lançamentos do novo mês no saldo anterior ou apagá-los por acidente.
-    # Para manter lançamentos pós-corte (inclusive manuais), use manter_apos_corte.
-    if modo_limpeza in ("limpar_tudo", "somente_hotfolder_mes_atual"):
-        valida_conn = get_db_connection()
-        try:
-            if modo_limpeza == "limpar_tudo":
-                futuros = valida_conn.execute(
-                    "SELECT COUNT(*) FROM lancamentos WHERE data_lancamento > ? OR data_lancamento IS NULL",
-                    (data_corte_iso,),
-                ).fetchone()[0]
-                motivo = (
-                    "O modo 'Limpar todos' somaria os lançamentos posteriores ao saldo anterior e apagaria seus detalhes. "
-                    "Escolha 'Manter todos os lançamentos após a data de corte' ou ajuste o corte."
-                )
-            else:
-                futuros = valida_conn.execute(
-                    """
-                    SELECT COUNT(*) FROM lancamentos
-                    WHERE (data_lancamento > ? OR data_lancamento IS NULL)
-                      AND COALESCE(origem, 'manual') != 'hotfolder'
-                    """,
-                    (data_corte_iso,),
-                ).fetchone()[0]
-                motivo = (
-                    "O modo 'Somente Hot Folder' apagaria lançamento(s) manual(is) posterior(es). "
-                    "Escolha 'Manter todos os lançamentos após a data de corte' ou ajuste o corte."
-                )
-        except Exception as e:
-            return False, f"Não foi possível validar os lançamentos após o corte: {e}. Nenhum dado foi alterado."
-        finally:
-            valida_conn.close()
-        if futuros:
-            return False, (
-                f"Virada cancelada: foram encontrados {futuros} lançamento(s) posteriores à data de corte. "
-                f"{motivo} Nenhum dado foi alterado."
-            )
+    try:
+        dt_corte = date.fromisoformat(data_corte_iso)
+        if dt_corte.day != calendar.monthrange(dt_corte.year, dt_corte.month)[1]:
+            return False, "A virada deve usar o último dia do mês para não dividir uma fatura em dois fechamentos."
+    except ValueError:
+        return False, "Data de corte inválida. Nenhum dado foi alterado."
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     if os.path.exists(DB_PATH):
-        shutil.copy2(
-            DB_PATH,
-            os.path.join(BACKUP_DIR, f"backup_fechamento_ate_{data_corte_iso}_{ts}.db"),
-        )
+        backup_path = os.path.join(BACKUP_DIR, f"backup_fechamento_ate_{data_corte_iso}_{ts}.db")
+        origem = destino = None
+        try:
+            origem = sqlite3.connect(DB_PATH, timeout=30.0)
+            destino = sqlite3.connect(backup_path, timeout=30.0)
+            origem.backup(destino)
+        except Exception as exc:
+            if destino:
+                destino.close()
+                destino = None
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            return False, f"Não foi possível criar o backup de segurança: {exc}. Nenhum dado foi alterado."
+        finally:
+            if origem:
+                origem.close()
+            if destino:
+                destino.close()
 
     conn = get_db_connection()
     try:
-        try:
-            conn.execute("ALTER TABLE arquivos_monitorados ADD COLUMN ignorado INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
+        faturas_fechadas = 0
+        lancamentos_arquivados = 0
         with conn:
-            clientes = conn.execute("SELECT * FROM clientes").fetchall()
-            clientes_atualizados = 0
-
-            for c in clientes:
-                cid = c["id"]
-                fat_ant_atual = float(c["fatura_anterior"] or 0.0)
-
-                if modo_limpeza == "somente_hotfolder_mes_atual":
-                    cond_sql = "cliente_id = ? AND (data_lancamento <= ? OR origem != 'hotfolder') AND id >= 2700"
-                    cond_join = "l.cliente_id = ? AND (l.data_lancamento <= ? OR l.origem != 'hotfolder') AND l.id >= 2700"
-                    params_q = (cid, data_corte_iso)
-                elif modo_limpeza == "limpar_tudo":
-                    cond_sql = "cliente_id = ? AND id >= 2700"
-                    cond_join = "l.cliente_id = ? AND l.id >= 2700"
-                    params_q = (cid,)
-                else:
-                    cond_sql = "cliente_id = ? AND data_lancamento <= ? AND id >= 2700"
-                    cond_join = "l.cliente_id = ? AND l.data_lancamento <= ? AND l.id >= 2700"
-                    params_q = (cid, data_corte_iso)
-
-                l_tot = conn.execute(
-                    f"""
-                    SELECT
-                        COALESCE(SUM(valor_entrega), 0) AS ent,
-                        COALESCE(SUM(valor_pagamento), 0) AS pgto,
-                        COALESCE(SUM(pagamento_fatura_anterior), 0) AS pgto_fat
+            periodos_rows = conn.execute(
+                """
+                SELECT periodo FROM (
+                    SELECT DISTINCT substr(data_lancamento, 1, 7) AS periodo
                     FROM lancamentos
-                    WHERE {cond_sql}
+                    WHERE cliente_id IS NOT NULL
+                      AND data_lancamento <= ?
+                      AND fatura_id IS NULL
+                      AND length(data_lancamento) >= 7
+                    UNION
+                    SELECT periodo FROM faturas_cliente
+                    WHERE status = 'reaberta' AND data_fim <= ?
+                )
+                ORDER BY periodo
+                """,
+                (data_corte_iso, data_corte_iso),
+            ).fetchall()
+
+            for row_periodo in periodos_rows:
+                periodo = row_periodo["periodo"]
+                if not periodo:
+                    continue
+                inicio, fim = limites_periodo_fatura(periodo)
+                if fim > data_corte_iso:
+                    continue
+                clientes_periodo = conn.execute(
+                    """
+                    SELECT cliente_id FROM lancamentos
+                    WHERE data_lancamento BETWEEN ? AND ? AND cliente_id IS NOT NULL AND fatura_id IS NULL
+                    UNION
+                    SELECT cliente_id FROM faturas_cliente
+                    WHERE periodo = ? AND status = 'reaberta'
+                    ORDER BY cliente_id
                     """,
-                    params_q,
-                ).fetchone()
-
-                s_tot = conn.execute(
-                    f"""
-                    SELECT COALESCE(SUM(s.valor), 0) AS srv
-                    FROM servicos s
-                    JOIN lancamentos l ON s.lancamento_id = l.id
-                    WHERE {cond_join}
-                    """,
-                    params_q,
-                ).fetchone()
-
-                pgto_fat = float(l_tot["pgto_fat"] or 0.0)
-                srv = float(s_tot["srv"] or 0.0)
-                ent = float(l_tot["ent"] or 0.0)
-                pgto = float(l_tot["pgto"] or 0.0)
-
-                saldo_fatura_anterior = fat_ant_atual - pgto_fat
-                nova_fat_ant = round((srv + ent - pgto) + saldo_fatura_anterior, 2)
-
-                conn.execute(
-                    "UPDATE clientes SET fatura_anterior = ? WHERE id = ?",
-                    (nova_fat_ant, cid),
-                )
-                clientes_atualizados += 1
-
-            # Define quais lançamentos devem ser removidos conforme o modo escolhido
-            if modo_limpeza == "limpar_tudo":
-                rows_del = conn.execute("SELECT id FROM lancamentos").fetchall()
-            elif modo_limpeza == "somente_hotfolder_mes_atual":
-                rows_del = conn.execute(
-                    "SELECT id FROM lancamentos WHERE data_lancamento <= ? OR origem != 'hotfolder'",
-                    (data_corte_iso,),
+                    (inicio, fim, periodo),
                 ).fetchall()
-            else:  # manter_apos_corte
-                rows_del = conn.execute(
-                    "SELECT id FROM lancamentos WHERE data_lancamento <= ?",
-                    (data_corte_iso,),
-                ).fetchall()
+                for row_cliente in clientes_periodo:
+                    cliente_id = int(row_cliente["cliente_id"])
+                    ok, resultado = _fechar_fatura_periodo_conn(
+                        conn, cliente_id, periodo, motivo="Virada de mês", usuario="sistema"
+                    )
+                    if not ok:
+                        raise ValueError(resultado)
+                    faturas_fechadas += 1
+                    fatura = _obter_fatura_periodo_conn(conn, cliente_id, periodo)
+                    if fatura:
+                        lancamentos_arquivados += conn.execute(
+                            "SELECT COUNT(*) FROM lancamentos WHERE fatura_id = ?",
+                            (fatura["id"],),
+                        ).fetchone()[0]
 
-            ids_del = [r["id"] for r in rows_del]
-            if ids_del:
-                placeholders = ",".join("?" for _ in ids_del)
-                conn.execute(
-                    f"UPDATE arquivos_monitorados SET ignorado = 1, lancamento_id = NULL, servico_id = NULL WHERE lancamento_id IN ({placeholders})",
-                    ids_del,
-                )
-                conn.execute(
-                    f"DELETE FROM servicos WHERE lancamento_id IN ({placeholders})",
-                    ids_del,
-                )
-                conn.execute(
-                    f"DELETE FROM lancamentos WHERE id IN ({placeholders})",
-                    ids_del,
-                )
-
-            # Atualiza fatura_anterior e saldo_fatura_anterior nos lançamentos remanescentes do mês novo
-            conn.execute(
-                """
-                UPDATE lancamentos
-                SET fatura_anterior = COALESCE((SELECT c.fatura_anterior FROM clientes c WHERE c.id = lancamentos.cliente_id), 0.0),
-                    saldo_fatura_anterior = COALESCE((SELECT c.fatura_anterior FROM clientes c WHERE c.id = lancamentos.cliente_id), 0.0) - COALESCE(pagamento_fatura_anterior, 0.0)
-                WHERE cliente_id IS NOT NULL
-                """
-            )
-
-            # Calcula o 1º dia após a data de corte para configurar hotfolder_data_minima
-            try:
-                from datetime import timedelta
-                dt_prox = date.fromisoformat(data_corte_iso) + timedelta(days=1)
-                prox_iso = dt_prox.isoformat()
-            except Exception:
-                prox_iso = "2026-10-01"
-
+            # O corte define a idade mínima permitida para novas importações do RIP,
+            # mas nunca reduz uma proteção mais recente já configurada.
+            proxima_data = (dt_corte + timedelta(days=1)).isoformat()
+            atual_cfg = conn.execute(
+                "SELECT valor FROM configuracoes WHERE chave = 'hotfolder_data_minima'"
+            ).fetchone()
+            data_minima_atual = (atual_cfg["valor"] or "").strip() if atual_cfg else ""
+            if data_minima_atual and re.fullmatch(r"\d{4}-\d{2}-\d{2}", data_minima_atual):
+                proxima_data = max(proxima_data, data_minima_atual)
             conn.execute(
                 "INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('hotfolder_data_minima', ?)",
-                (prox_iso,),
+                (proxima_data,),
             )
 
+        return True, (
+            f"Virada concluída: {faturas_fechadas} fatura(s) mensal(is) arquivada(s) até "
+            f"{format_date_br(data_corte_iso)}. Os {lancamentos_arquivados} lançamento(s) e seus serviços "
+            "foram preservados no histórico; Caixa e estoque não foram alterados."
+        )
+    except Exception as exc:
+        return False, f"Erro na virada de mês: {exc}. Nenhuma fatura foi parcialmente fechada."
+    finally:
         conn.close()
-        return True, f"Virada de mês concluída! Saldos até {format_date_br(data_corte_iso)} transferidos para 'Fatura Anterior' de {clientes_atualizados} clientes e {len(ids_del)} lançamentos antigos limpos."
-    except Exception as e:
-        conn.close()
-        return False, f"Erro na virada de mês: {e}"
 
 
 # ==============================================================================
@@ -1714,6 +2238,8 @@ def exportar_backup_json():
         "servicos",
         "lancamentos_caixa",
         "arquivos_monitorados",
+        "faturas_cliente",
+        "faturas_auditoria",
     ]
     payload = {
         "sistema": "Sistema Terra Python (SQLite)",
@@ -1741,6 +2267,8 @@ def importar_backup_json(payload):
         with conn:
             ordem_limpeza = [
                 "arquivos_monitorados",
+                "faturas_auditoria",
+                "faturas_cliente",
                 "servicos",
                 "lancamentos",
                 "lancamentos_caixa",

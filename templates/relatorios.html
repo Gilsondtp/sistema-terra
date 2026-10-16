@@ -59,7 +59,7 @@
     <div class="card-body">
         <form id="formFiltroFatura" method="GET" action="{{ url_for('relatorios_page') }}">
             <div class="row g-3 align-items-end">
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label fw-semibold">Cliente *</label>
                     <select class="form-select" name="cliente_id" required onchange="this.form.submit()">
                         <option value="">Selecione um cliente</option>
@@ -69,16 +69,15 @@
                     </select>
                 </div>
                 <div class="col-md-4">
-                    <label class="form-label fw-semibold">Data Início</label>
-                    <input type="date" class="form-control" name="data_inicio" value="{{ data_inicio }}" onchange="this.form.submit()">
+                    <label class="form-label fw-semibold">Período mensal</label>
+                    <input type="month" class="form-control" name="periodo" value="{{ periodo }}" required onchange="this.form.submit()">
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-semibold">Data Fim</label>
-                    <input type="date" class="form-control" name="data_fim" value="{{ data_fim }}" onchange="this.form.submit()">
+                <div class="col-md-2 d-grid">
+                    <a class="btn btn-outline-secondary" href="{{ url_for('faturas_page', cliente_id=cliente_id, periodo=periodo) }}"><i class="fas fa-box-archive me-1"></i>Histórico</a>
                 </div>
             </div>
             <div class="form-text mt-2">
-                A fatura é exibida automaticamente ao selecionar o cliente ou alterar o período.
+                A fatura do mês é exibida automaticamente ao selecionar cliente ou período. Meses fechados são consultados sem misturar os lançamentos do período corrente.
             </div>
         </form>
     </div>
@@ -86,9 +85,16 @@
 
 {% if cliente_atual %}
     {% if fatura_gerada %}
-        <div class="alert alert-success no-print" role="status">
-            <i class="fas fa-circle-check me-1"></i>
-            Fatura gerada para <strong>{{ cliente_atual.nome }}</strong>. O relatório e os valores calculados estão abaixo.
+        <div class="alert {% if fatura_atual and fatura_atual.status == 'reaberta' %}alert-warning{% elif fatura_atual %}alert-success{% else %}alert-info{% endif %} no-print" role="status">
+            {% if fatura_atual and fatura_atual.status == 'reaberta' %}
+                <i class="fas fa-lock-open me-1"></i>Fatura de <strong>{{ cliente_atual.nome }}</strong> — {{ periodo }} — reaberta para revisão.
+                <a href="{{ url_for('fatura_detalhe_page', fatura_id=fatura_atual.id) }}" class="alert-link">Abrir auditoria e concluir revisão.</a>
+            {% elif fatura_atual %}
+                <i class="fas fa-box-archive me-1"></i>Fatura arquivada de <strong>{{ cliente_atual.nome }}</strong> — {{ periodo }}.
+                <a href="{{ url_for('fatura_detalhe_page', fatura_id=fatura_atual.id) }}" class="alert-link">Consultar histórico / solicitar correção.</a>
+            {% else %}
+                <i class="fas fa-circle-info me-1"></i>Fatura aberta de <strong>{{ cliente_atual.nome }}</strong> — {{ periodo }}. O relatório e os valores calculados estão abaixo.
+            {% endif %}
         </div>
     {% endif %}
     <div class="card p-4 print-content" id="relatorio-gerado" tabindex="-1" data-gerado="{{ '1' if fatura_gerada else '0' }}">
@@ -102,7 +108,8 @@
             </p>
         </div>
 
-        <h2 class="fw-bold mb-3">FATURA</h2>
+        <h2 class="fw-bold mb-1">FATURA</h2>
+        <div class="text-muted mb-3">Período: {{ periodo }}</div>
 
         <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
             <div>
@@ -275,20 +282,36 @@
         </div>
 
         <!-- Botões de Ação (Imprimir e Fechar Fatura) -->
-        <div class="mt-4 d-flex gap-2 no-print">
+        <div class="mt-4 d-flex flex-wrap gap-2 no-print">
             <button type="button" onclick="window.print()" class="btn btn-primary px-4">
                 <i class="fas fa-print me-1"></i> Imprimir Fatura
             </button>
 
-            {% if lancamentos %}
+            {% if fatura_atual %}
+                <a class="btn btn-outline-secondary" href="{{ url_for('fatura_detalhe_page', fatura_id=fatura_atual.id) }}">
+                    <i class="fas fa-clipboard-list me-1"></i>Ver detalhes e auditoria
+                </a>
+                {% if fatura_atual.status == 'reaberta' %}
+                    <form method="POST" action="{{ url_for('relatorios_page') }}"
+                          onsubmit="return confirm('Fechar novamente a fatura revisada e recalcular os saldos posteriores?');">
+                        <input type="hidden" name="fechar_fatura" value="1">
+                        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+                        <input type="hidden" name="periodo" value="{{ periodo }}">
+                        <input type="hidden" name="data_inicio" value="{{ data_inicio }}">
+                        <input type="hidden" name="data_fim" value="{{ data_fim }}">
+                        <button type="submit" class="btn btn-warning px-4"><i class="fas fa-check-double me-1"></i>Fechar fatura revisada</button>
+                    </form>
+                {% endif %}
+            {% elif lancamentos %}
                 <form method="POST" action="{{ url_for('relatorios_page') }}"
-                      onsubmit="return confirm('Tem certeza que deseja FECHAR A FATURA exibida?\n\n- Os lançamentos e serviços do período serão limpos do banco (mantendo o consumo do estoque);\n- O Saldo Devedor de R$ {{ totais.saldo_devedor | moeda }} será transferido para o campo Fatura Anterior do próximo mês.');">
+                      onsubmit="return confirm('Arquivar a fatura de {{ periodo }}? Os lançamentos e serviços serão preservados para consulta histórica. O saldo de R$ {{ totais.saldo_devedor|moeda }} será transportado ao próximo período; Caixa e estoque não serão apagados nem estornados.');">
                     <input type="hidden" name="fechar_fatura" value="1">
                     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+                    <input type="hidden" name="periodo" value="{{ periodo }}">
                     <input type="hidden" name="data_inicio" value="{{ data_inicio }}">
                     <input type="hidden" name="data_fim" value="{{ data_fim }}">
                     <button type="submit" class="btn btn-danger px-4">
-                        <i class="fas fa-check-double me-1"></i> Fechar Fatura
+                        <i class="fas fa-box-archive me-1"></i> Arquivar fatura do mês
                     </button>
                 </form>
             {% endif %}

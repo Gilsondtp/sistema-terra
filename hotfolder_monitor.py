@@ -318,6 +318,10 @@ def limpar_e_corrigir_registros_monitorados():
         }
         with conn:
             for cid_aj, (val_antigo, val_correto) in ajustes_fatura_setembro.items():
+                if conn.execute(
+                    "SELECT 1 FROM faturas_cliente WHERE cliente_id = ? LIMIT 1", (cid_aj,)
+                ).fetchone():
+                    continue
                 row_cli = conn.execute(
                     "SELECT fatura_anterior FROM clientes WHERE id = ?", (cid_aj,)
                 ).fetchone()
@@ -353,6 +357,11 @@ def limpar_e_corrigir_registros_monitorados():
         rows = conn.execute(
             "SELECT id, caminho_completo, nome_arquivo, pasta_produto, cor_detectada, lancamento_id, data_lancamento, ignorado FROM arquivos_monitorados"
         ).fetchall()
+        # Um fechamento arquivado nunca deve ser apagado/reprocessado pela limpeza automática.
+        lancamentos_arquivados = {
+            int(row["id"])
+            for row in conn.execute("SELECT id FROM lancamentos WHERE fatura_id IS NOT NULL").fetchall()
+        }
 
         # Reprocessa automaticamente registros que tinham ficado com sufixo residual 'ps C/K/M/Y'
         # ou cuja cor_detectada mudou com o novo parser (ex: antes 'UNICA' e agora 'C'/'M'/'Y'/'K')
@@ -361,7 +370,7 @@ def limpar_e_corrigir_registros_monitorados():
             SELECT s.id, s.lancamento_id, s.descricao, s.quantidade, s.produto_id
             FROM servicos s
             JOIN lancamentos l ON s.lancamento_id = l.id
-            WHERE l.origem = 'hotfolder'
+            WHERE l.origem = 'hotfolder' AND l.fatura_id IS NULL
             """
         ).fetchall()
         lids_reprocessar = set()
@@ -386,7 +395,12 @@ def limpar_e_corrigir_registros_monitorados():
                 )
 
         for r in rows:
-            if not r["ignorado"] and r["lancamento_id"] and eh_arquivo_tiff_valido(r["nome_arquivo"]):
+            if (
+                not r["ignorado"]
+                and r["lancamento_id"]
+                and int(r["lancamento_id"]) not in lancamentos_arquivados
+                and eh_arquivo_tiff_valido(r["nome_arquivo"])
+            ):
                 _, cor_nova, _ = extrair_cor_e_base(r["nome_arquivo"])
                 if (r["cor_detectada"] or "UNICA") != cor_nova:
                     lids_reprocessar.add(r["lancamento_id"])
@@ -422,6 +436,8 @@ def limpar_e_corrigir_registros_monitorados():
         arq_ids_remover = []
 
         for r in rows:
+            if r["lancamento_id"] and int(r["lancamento_id"]) in lancamentos_arquivados:
+                continue
             if not eh_arquivo_tiff_valido(r["nome_arquivo"]):
                 arq_ids_remover.append(r["id"])
                 if r["lancamento_id"]:
@@ -989,6 +1005,32 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
     chave_serv = normalizar_compacto(info_cli["descricao_servico"]) or normalizar_compacto(base_nome)
     chave_agrupamento = f"{data_ref}::{chave_prod}::{chave_cli}::{chave_serv}"
 
+    fatura_vinculada = None
+    saldo_abertura_fatura = None
+    if info_cli["cliente_id"]:
+        fatura_vinculada = conn.execute(
+            "SELECT id, status, saldo_abertura FROM faturas_cliente WHERE cliente_id = ? AND periodo = ?",
+            (int(info_cli["cliente_id"]), data_ref[:7]),
+        ).fetchone()
+        if fatura_vinculada and fatura_vinculada["status"] != "reaberta":
+            # Arquivo tardio de mês fechado: registra a exclusão permanente sem
+            # tocar nos serviços/estoque já arquivados nem voltar a tentar importá-lo.
+            with conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO arquivos_monitorados
+                    (caminho_completo, nome_arquivo, pasta_produto, chave_agrupamento,
+                     cor_detectada, pagina_detectada, lancamento_id, servico_id, data_lancamento, ignorado)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1)
+                    """,
+                    (caminho_abs, nome_arquivo, nome_pasta_produto, chave_agrupamento, cor, pagina or "", data_ref),
+                )
+            conn.close()
+            return None
+        if fatura_vinculada:
+            saldo_abertura_fatura = float(fatura_vinculada["saldo_abertura"] or 0.0)
+
+    fatura_id = None
     with conn:
         # Procura se já existe um serviço deste mesmo cliente + descrição + produto na mesma data
         reg_anterior = conn.execute(
@@ -1010,6 +1052,10 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
             ).fetchone()
             if servico_existente:
                 lancamento_id = servico_existente["lancamento_id"]
+                row_fatura = conn.execute(
+                    "SELECT fatura_id FROM lancamentos WHERE id = ?", (lancamento_id,)
+                ).fetchone()
+                fatura_id = row_fatura["fatura_id"] if row_fatura else None
 
         if servico_existente:
             servico_id = servico_existente["id"]
@@ -1074,7 +1120,9 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
             cliente_id = info_cli["cliente_id"]
             identificado = 1 if info_cli["identificado"] else 0
             fatura_anterior = 0.0
-            if cliente_id:
+            if saldo_abertura_fatura is not None:
+                fatura_anterior = saldo_abertura_fatura
+            elif cliente_id:
                 row_c = conn.execute(
                     "SELECT fatura_anterior FROM clientes WHERE id = ?",
                     (cliente_id,),
@@ -1082,13 +1130,14 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
                 if row_c:
                     fatura_anterior = float(row_c["fatura_anterior"] or 0.0)
 
+            fatura_id = int(fatura_vinculada["id"]) if fatura_vinculada else None
             cur_l = conn.execute(
                 """
                 INSERT INTO lancamentos
                 (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
                  valor_entrega, valor_pagamento, fatura_anterior, pagamento_fatura_anterior,
-                 saldo_fatura_anterior, observacao)
-                VALUES (?, ?, ?, 'hotfolder', ?, 0.0, 0.0, ?, 0.0, ?, ?)
+                 saldo_fatura_anterior, fatura_id, observacao)
+                VALUES (?, ?, ?, 'hotfolder', ?, 0.0, 0.0, ?, 0.0, ?, ?, ?)
                 """,
                 (
                     cliente_id,
@@ -1097,6 +1146,7 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
                     data_ref,
                     fatura_anterior,
                     fatura_anterior,
+                    fatura_id,
                     f"Auto Hot Folder ({nome_pasta_produto})",
                 ),
             )
@@ -1153,6 +1203,25 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
                 data_ref,
             ),
         )
+        if fatura_id:
+            conn.execute(
+                """
+                INSERT INTO faturas_auditoria (fatura_id, acao, usuario, motivo, detalhes)
+                VALUES (?, 'lancamento_hotfolder', 'sistema', 'Arquivo recebido durante a reabertura da fatura.', ?)
+                """,
+                (
+                    int(fatura_id),
+                    json.dumps(
+                        {
+                            "lancamento_id": lancamento_id,
+                            "servico_id": servico_id,
+                            "arquivo": nome_arquivo,
+                            "cor_detectada": cor,
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
 
     conn.close()
     return {
