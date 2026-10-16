@@ -1,7 +1,9 @@
+import io
 import os
 import shutil
 import tempfile
 import unittest
+import zipfile
 from datetime import date
 from unittest.mock import patch
 
@@ -66,6 +68,22 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn('name="data_inicio" value=""', html)
         self.assertIn('name="data_fim" value=""', html)
         self.assertIn("Pagtº Cliente: Norte Grafica", html)
+
+    def test_project_zip_is_easy_to_reach_and_excludes_legacy_php_files(self):
+        client = self.app_module.app.test_client()
+        page = client.get("/configuracoes")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('href="/download-projeto-zip"', page.get_data(as_text=True))
+
+        response = client.get("/download-projeto-zip")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment;", response.headers.get("Content-Disposition", ""))
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            nomes = archive.namelist()
+        self.assertIn("sistema-terra/templates/faturas.html", nomes)
+        self.assertIn("sistema-terra/templates/fatura_detalhe.html", nomes)
+        self.assertIn("sistema-terra/tests/test_database_changes.py", nomes)
+        self.assertFalse([nome for nome in nomes if nome.lower().endswith(".php")])
 
     def test_ps_source_is_configured_separately_from_tiff_hotfolder(self):
         response = self.app_module.app.test_client().get("/configuracoes")

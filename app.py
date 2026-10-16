@@ -1272,10 +1272,7 @@ def importar_backup():
 
 @app.route("/download-projeto-zip", methods=["GET"])
 def download_projeto_zip():
-    """
-    Gera e envia um arquivo .zip com todos os arquivos da versão em Python + SQLite
-    prontos para rodar em qualquer computador.
-    """
+    """Gera e envia o projeto Python completo, sem arquivos PHP legados."""
     mem_zip = io.BytesIO()
     arquivos_incluir = [
         ".gitignore",
@@ -1291,22 +1288,30 @@ def download_projeto_zip():
         "sistema_terra.db",
         os.path.join("backups", "setembro_completo_30_09_2026.db"),
     ]
-    pastas_incluir = ["templates", "static"]
+    pastas_incluir = ["templates", "static", "tests"]
 
     with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for fname in arquivos_incluir:
+            if fname.lower().endswith(".php"):
+                continue
             fpath = os.path.join(database.BASE_DIR, fname)
-            if os.path.exists(fpath):
-                zf.write(fpath, arcname=os.path.join("sistema-terra", fname))
+            if os.path.isfile(fpath):
+                arcname = os.path.join("sistema-terra", fname).replace(os.sep, "/")
+                zf.write(fpath, arcname=arcname)
 
         for folder in pastas_incluir:
             folder_path = os.path.join(database.BASE_DIR, folder)
-            if os.path.exists(folder_path):
-                for root, _, files in os.walk(folder_path):
-                    for f in files:
-                        full_p = os.path.join(root, f)
-                        rel_p = os.path.relpath(full_p, database.BASE_DIR)
-                        zf.write(full_p, arcname=os.path.join("sistema-terra", rel_p))
+            if not os.path.isdir(folder_path):
+                continue
+            for root, dirs, files in os.walk(folder_path):
+                dirs[:] = [d for d in dirs if d not in {"__pycache__", ".pytest_cache", ".venv", "node_modules"}]
+                for filename in files:
+                    if filename.lower().endswith(".php"):
+                        continue
+                    full_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(full_path, database.BASE_DIR)
+                    arcname = os.path.join("sistema-terra", rel_path).replace(os.sep, "/")
+                    zf.write(full_path, arcname=arcname)
 
     mem_zip.seek(0)
     return send_file(
