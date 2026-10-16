@@ -131,10 +131,15 @@
                 <i class="fas fa-layer-group"></i>
                 <span>Sistema Terra</span>
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="mainNavbar">
+            <div class="d-flex align-items-center gap-2 order-lg-3">
+                <a class="btn btn-sm btn-warning text-dark fw-bold flex-shrink-0" href="{{ url_for('download_projeto_zip') }}" aria-label="Baixar o projeto completo em ZIP" title="Baixar projeto completo em ZIP">
+                    <i class="fas fa-file-zipper"></i><span class="d-none d-sm-inline ms-1">Baixar ZIP</span><span class="d-sm-none ms-1">ZIP</span>
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar" aria-controls="mainNavbar" aria-expanded="false" aria-label="Abrir menu">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+            </div>
+            <div class="collapse navbar-collapse order-lg-2" id="mainNavbar">
                 <ul class="navbar-nav mx-auto mb-2 mb-lg-0">
                     <li class="nav-item">
                         <a class="nav-link {% if active_page == 'diario' %}active{% endif %}" href="{{ url_for('lancamento_diario') }}">
@@ -185,9 +190,6 @@
                         </a>
                     </li>
                 </ul>
-                <a class="btn btn-sm btn-warning text-dark fw-bold me-2" href="{{ url_for('download_projeto_zip') }}" aria-label="Baixar o projeto completo em ZIP" title="Baixar projeto completo em ZIP">
-                    <i class="fas fa-file-zipper me-1"></i> Baixar ZIP
-                </a>
                 <div class="d-flex align-items-center gap-2 text-white small">
                     <span class="badge bg-white text-dark border" title="Caminho Hot Folder Configurado">
                         <i class="fas fa-network-wired text-success me-1"></i>

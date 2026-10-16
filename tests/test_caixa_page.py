@@ -73,7 +73,11 @@ class CaixaPageTests(unittest.TestCase):
         client = self.app_module.app.test_client()
         page = client.get("/configuracoes")
         self.assertEqual(page.status_code, 200)
-        self.assertIn('href="/download-projeto-zip"', page.get_data(as_text=True))
+        html = page.get_data(as_text=True)
+        download_link = html.index('href="/download-projeto-zip"')
+        navbar_collapse = html.index('id="mainNavbar"')
+        self.assertLess(download_link, navbar_collapse)
+        self.assertIn('Baixar Projeto Completo em Python (.zip)', html)
 
         response = client.get("/download-projeto-zip")
         self.assertEqual(response.status_code, 200)
