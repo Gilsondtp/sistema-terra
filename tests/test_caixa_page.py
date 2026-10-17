@@ -89,6 +89,20 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("sistema-terra/tests/test_database_changes.py", nomes)
         self.assertFalse([nome for nome in nomes if nome.lower().endswith(".php")])
 
+    def test_windows_launchers_resolve_pythonw_and_explain_missing_runtime(self):
+        with open(os.path.join(database.BASE_DIR, "iniciar_sistema.bat"), encoding="utf-8") as launcher:
+            batch = launcher.read().lower()
+        with open(os.path.join(database.BASE_DIR, "iniciar_sem_janela.vbs"), encoding="utf-8") as launcher:
+            vbscript = launcher.read().lower()
+
+        self.assertIn("py -3 -c", batch)
+        self.assertIn("sys.executable", batch)
+        self.assertIn("pythonw.exe", batch)
+        self.assertIn("python 3 nao foi encontrado", batch)
+        self.assertIn("pyw -3", vbscript)
+        self.assertIn("pythonw", vbscript)
+        self.assertIn("python ausente", vbscript)
+
     def test_ps_source_is_configured_separately_from_tiff_hotfolder(self):
         response = self.app_module.app.test_client().get("/configuracoes")
         self.assertEqual(response.status_code, 200)

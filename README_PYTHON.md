@@ -33,11 +33,15 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 
 ## Como Executar no Windows
 
-Basta dar dois cliques em **`iniciar_sistema.bat`** ou executar no terminal:
+O projeto não inclui o interpretador Python. Na máquina virtual, instale Python 3 para Windows (64 bits) antes de iniciar; inclua o Python Launcher (`py`/`pyw`) na instalação. O `pythonw.exe` faz parte da instalação padrão do Python para Windows.
+
+Na primeira execução, dê dois cliques em **`iniciar_sistema.bat`**. O script localiza o Python pelo Launcher `py` ou por `python`, instala as dependências se necessário e inicia o sistema. Se a instalação não tiver o `pythonw.exe` ao lado do `python.exe`, ele tenta o Launcher `pyw`; se nenhum estiver disponível, mostra instruções em vez de falhar com “não encontrou pythonw”.
+
+Depois da configuração inicial, **`iniciar_sem_janela.vbs`** inicia o sistema sem manter uma janela de terminal aberta. Também é possível executar manualmente no terminal:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python app.py
 ```
 
-Depois acesse no navegador: `http://localhost:5000`
+Depois acesse no navegador: `http://127.0.0.1:5000`.
