@@ -105,6 +105,12 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("pythonw", vbscript)
         self.assertIn("python ausente", vbscript)
 
+    def test_invoice_reopening_reason_is_optional_in_the_ui(self):
+        with open(os.path.join(database.BASE_DIR, "templates", "fatura_detalhe.html"), encoding="utf-8") as template:
+            html = template.read()
+        self.assertIn("Motivo da reabertura (opcional)", html)
+        self.assertNotIn('name="motivo" required', html)
+
     def test_ps_source_is_configured_separately_from_tiff_hotfolder(self):
         response = self.app_module.app.test_client().get("/configuracoes")
         self.assertEqual(response.status_code, 200)

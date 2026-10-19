@@ -1228,10 +1228,9 @@ def obter_saldo_abertura_fatura(cliente_id, periodo):
         conn.close()
 
 
-def reabrir_fatura_cliente(fatura_id, motivo, usuario="sistema"):
+def reabrir_fatura_cliente(fatura_id, motivo="", usuario="sistema"):
+    """Reabre uma fatura para correção; o motivo é opcional e a ação sempre é auditada."""
     motivo = str(motivo or "").strip()
-    if not motivo:
-        return False, "Informe o motivo da reabertura para registrar a auditoria."
     conn = get_db_connection()
     try:
         with conn:

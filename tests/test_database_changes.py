@@ -402,6 +402,30 @@ class DatabaseChangeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mês já foi arquivado"):
             database.criar_lancamento(dados)
 
+    def test_reopening_invoice_does_not_require_a_reason_and_is_still_audited(self):
+        lancamento_id = database.criar_lancamento(
+            {
+                "cliente_id": 23,
+                "data_lancamento": "2027-01-10",
+                "servicos": [
+                    {"descricao": "Lançamento de teste", "quantidade": 1, "valor": 25.00}
+                ],
+            }
+        )
+        self.assertTrue(lancamento_id)
+        ok, resultado = database.fechar_fatura_cliente(23, "2027-01-01", "2027-01-31")
+        self.assertTrue(ok, resultado)
+        fatura = database.obter_fatura_periodo(23, "2027-01")
+
+        ok, mensagem = database.reabrir_fatura_cliente(fatura["id"], "")
+        self.assertTrue(ok, mensagem)
+        evento = next(
+            evento for evento in database.listar_auditoria_fatura(fatura["id"])
+            if evento["acao"] == "reabertura"
+        )
+        self.assertEqual(evento["motivo"], "")
+        self.assertTrue(evento["created_at"])
+
     def test_month_close_transfers_balance_and_preserves_october_data_and_cash(self):
         with sqlite3.connect(self.db_path) as conn:
             cash_before = conn.execute(

@@ -84,7 +84,7 @@
     <div class="card-body">
         <p class="small text-muted">A reabertura será registrada na auditoria. Depois de corrigir os lançamentos, feche novamente esta fatura para atualizar o saldo transportado aos meses seguintes.</p>
         <form method="POST" action="{{ url_for('reabrir_fatura_route', fatura_id=fatura.id) }}" class="row g-2 align-items-end" onsubmit="return confirm('Reabrir esta fatura para correção? A ação ficará registrada na auditoria.');">
-            <div class="col-md-9"><label class="form-label fw-semibold">Motivo da reabertura *</label><input class="form-control" name="motivo" required maxlength="500" placeholder="Ex.: corrigir serviço lançado com valor incorreto"></div>
+            <div class="col-md-9"><label class="form-label fw-semibold">Motivo da reabertura (opcional)</label><input class="form-control" name="motivo" maxlength="500" placeholder="Se desejar, registre uma observação"></div>
             <div class="col-md-3 d-grid"><button class="btn btn-warning fw-bold" type="submit"><i class="fas fa-lock-open me-1"></i>Reabrir fatura</button></div>
         </form>
     </div>
