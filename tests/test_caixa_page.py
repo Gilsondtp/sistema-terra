@@ -69,7 +69,7 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn('name="data_fim" value=""', html)
         self.assertIn("Pagtº Cliente: Norte Grafica", html)
 
-    def test_project_zip_is_easy_to_reach_and_excludes_legacy_php_files(self):
+    def test_project_zip_is_accessible_and_excludes_legacy_code_and_user_data(self):
         client = self.app_module.app.test_client()
         page = client.get("/configuracoes")
         self.assertEqual(page.status_code, 200)
@@ -86,8 +86,10 @@ class CaixaPageTests(unittest.TestCase):
             nomes = archive.namelist()
         self.assertIn("sistema-terra/templates/faturas.html", nomes)
         self.assertIn("sistema-terra/templates/fatura_detalhe.html", nomes)
-        self.assertIn("sistema-terra/tests/test_database_changes.py", nomes)
-        self.assertFalse([nome for nome in nomes if nome.lower().endswith(".php")])
+        self.assertIn("sistema-terra/iniciar_sistema.bat", nomes)
+        self.assertIn("sistema-terra/iniciar_sem_janela.vbs", nomes)
+        self.assertFalse([nome for nome in nomes if nome.lower().endswith((".php", ".db", ".sqlite", ".sqlite3", ".sql"))])
+        self.assertFalse(any(nome.startswith("sistema-terra/tests/") for nome in nomes))
 
     def test_windows_launchers_resolve_pythonw_and_explain_missing_runtime(self):
         with open(os.path.join(database.BASE_DIR, "iniciar_sistema.bat"), encoding="utf-8") as launcher:

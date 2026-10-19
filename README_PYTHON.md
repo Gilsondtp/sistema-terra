@@ -31,6 +31,10 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
    - **Demonstrativo (`/demonstrativo`)**: Resumo geral de todos os clientes por período ou produto, produtos utilizados, alerta de estoque crítico, impressão e **Exportação para Excel (`.xlsx`)**.
    - **Backup Fácil (`/configuracoes`)**: Exportação e importação em 1 clique do banco SQLite (`.db`), `.json` ou `.sql`.
 
+## Atualizar sem substituir os dados
+
+O ZIP de atualização contém o código, templates e arquivos estáticos, mas **não inclui** `sistema_terra.db`, backups, dump SQL ou testes que dependem do banco de dados de desenvolvimento. Extraia os arquivos na pasta atual do sistema e mantenha o seu `sistema_terra.db` atualizado. Se extrair em uma pasta nova, copie para ela uma cópia do banco atualizado antes da primeira execução. Não use o banco de exemplo do repositório como substituto dos seus dados.
+
 ## Como Executar no Windows
 
 O projeto não inclui o interpretador Python. Na máquina virtual, instale Python 3 para Windows (64 bits) antes de iniciar; inclua o Python Launcher (`py`/`pyw`) na instalação. O `pythonw.exe` faz parte da instalação padrão do Python para Windows.

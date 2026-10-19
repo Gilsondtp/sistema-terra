@@ -1272,11 +1272,10 @@ def importar_backup():
 
 @app.route("/download-projeto-zip", methods=["GET"])
 def download_projeto_zip():
-    """Gera e envia o projeto Python completo, sem arquivos PHP legados."""
+    """Gera o pacote de atualização sem banco de dados ou arquivos PHP legados."""
     mem_zip = io.BytesIO()
     arquivos_incluir = [
         ".gitignore",
-        "Lancamentos 30_09_final.sql",
         "README_PYTHON.md",
         "app.py",
         "database.py",
@@ -1285,14 +1284,14 @@ def download_projeto_zip():
         "iniciar_sistema.bat",
         "iniciar_sem_janela.vbs",
         "parar_sistema.bat",
-        "sistema_terra.db",
-        os.path.join("backups", "setembro_completo_30_09_2026.db"),
     ]
-    pastas_incluir = ["templates", "static", "tests"]
+    # O pacote atualiza o código sem substituir o SQLite já atualizado do usuário.
+    pastas_incluir = ["templates", "static"]
+    extensoes_excluidas = {".php", ".db", ".sqlite", ".sqlite3", ".sql"}
 
     with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for fname in arquivos_incluir:
-            if fname.lower().endswith(".php"):
+            if os.path.splitext(fname)[1].lower() in extensoes_excluidas:
                 continue
             fpath = os.path.join(database.BASE_DIR, fname)
             if os.path.isfile(fpath):
@@ -1306,7 +1305,7 @@ def download_projeto_zip():
             for root, dirs, files in os.walk(folder_path):
                 dirs[:] = [d for d in dirs if d not in {"__pycache__", ".pytest_cache", ".venv", "node_modules"}]
                 for filename in files:
-                    if filename.lower().endswith(".php"):
+                    if os.path.splitext(filename)[1].lower() in extensoes_excluidas:
                         continue
                     full_path = os.path.join(root, filename)
                     rel_path = os.path.relpath(full_path, database.BASE_DIR)
