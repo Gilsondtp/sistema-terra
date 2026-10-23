@@ -3,6 +3,7 @@ setlocal
 chcp 65001 >nul 2>&1
 title Sistema Terra - Python + SQLite
 cd /d "%~dp0"
+set "PORT=5000"
 
 REM Resolve o Python 3 instalado; o Launcher pode funcionar mesmo sem python.exe no PATH.
 set "PYTHON_EXE="
@@ -42,14 +43,25 @@ if errorlevel 1 (
     )
 )
 
-REM Inicia em segundo plano usando o caminho descoberto acima.
+REM Inicia em segundo plano e aguarda a resposta real do servidor antes de abrir o navegador.
 start "" "%PYTHONW_EXE%" %PYTHONW_ARGS% "%~dp0app.py"
-timeout /t 2 /nobreak >nul
-start "" http://127.0.0.1:5000
+"%PYTHON_EXE%" "%~dp0wait_for_server.py"
+if errorlevel 1 goto :server_start_failed
+start "" "http://127.0.0.1:%PORT%"
 exit /b 0
 
+:server_start_failed
+echo.
+echo O Sistema Terra nao respondeu em http://127.0.0.1:%PORT%/healthz.
+echo Verifique se a pasta do sistema e o arquivo sistema_terra.db permitem gravacao.
+echo Se houver sistema_terra.log, ele sera aberto para mostrar o erro de inicializacao.
+if exist "%~dp0sistema_terra.log" start "" notepad.exe "%~dp0sistema_terra.log"
+echo Se nao houver log ou o erro continuar, envie o arquivo sistema_terra.log para suporte.
+pause
+exit /b 1
+
 :python_missing
-echo Python 3 nao foi encontrado nesta maquina virtual.
+echo Python 3 nao foi encontrado nesta maquina.
 echo Instale Python 3 para Windows e marque as opcoes Python Launcher e Add Python to PATH.
 echo Depois execute este arquivo novamente.
 pause

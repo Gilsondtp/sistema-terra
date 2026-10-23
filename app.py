@@ -1179,6 +1179,12 @@ def configuracoes_page():
     )
 
 
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Sinal simples para os inicializadores aguardarem o Flask antes de abrir o navegador."""
+    return jsonify({"service": "sistema-terra", "status": "ok"})
+
+
 @app.route("/hotfolder/status", methods=["GET"])
 def hotfolder_status():
     cfg = database.get_config()
@@ -1350,6 +1356,7 @@ def download_projeto_zip():
         "iniciar_sistema.bat",
         "iniciar_sem_janela.vbs",
         "parar_sistema.bat",
+        "wait_for_server.py",
     ]
     # O pacote atualiza o código sem substituir o SQLite já atualizado do usuário.
     pastas_incluir = ["templates", "static"]

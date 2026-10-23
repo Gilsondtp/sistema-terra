@@ -39,13 +39,13 @@ O ZIP de atualização contém o código, templates e arquivos estáticos, mas *
 
 O projeto não inclui o interpretador Python. Na máquina virtual, instale Python 3 para Windows (64 bits) antes de iniciar; inclua o Python Launcher (`py`/`pyw`) na instalação. O `pythonw.exe` faz parte da instalação padrão do Python para Windows.
 
-Na primeira execução, dê dois cliques em **`iniciar_sistema.bat`**. O script localiza o Python pelo Launcher `py` ou por `python`, instala as dependências se necessário e inicia o sistema. Se a instalação não tiver o `pythonw.exe` ao lado do `python.exe`, ele tenta o Launcher `pyw`; se nenhum estiver disponível, mostra instruções em vez de falhar com “não encontrou pythonw”.
+Na primeira execução, dê dois cliques em **`iniciar_sistema.bat`**. O script localiza o Python pelo Launcher `py` ou por `python`, instala as dependências se necessário e inicia o sistema. Se a instalação não tiver o `pythonw.exe` ao lado do `python.exe`, ele tenta o Launcher `pyw`; se nenhum estiver disponível, mostra instruções em vez de falhar com “não encontrou pythonw”. Antes de abrir o navegador, aguarda até 120 segundos pela resposta do servidor; se não iniciar, informa o caminho do `sistema_terra.log` para diagnóstico, em vez de abrir uma página com conexão recusada.
 
-Depois da configuração inicial, **`iniciar_sem_janela.vbs`** inicia o sistema sem manter uma janela de terminal aberta. Também é possível executar manualmente no terminal:
+Depois da configuração inicial, **`iniciar_sem_janela.vbs`** também aguarda a confirmação do servidor antes de abrir o navegador e mostra uma mensagem com o caminho do log se a inicialização falhar. Também é possível executar manualmente no terminal:
 
 ```bash
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-Depois acesse no navegador: `http://127.0.0.1:5000`.
+Depois acesse no navegador: `http://127.0.0.1:5000`. Esse endereço é local à máquina em que o servidor está rodando; para acessar de outro computador, use o IP da máquina principal na rede (por exemplo, `http://192.168.x.x:5000`) e permita o Python no Firewall do Windows.

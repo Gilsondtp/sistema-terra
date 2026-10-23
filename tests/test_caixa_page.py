@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import database
 import hotfolder_monitor
+import wait_for_server
 
 
 class CaixaPageTests(unittest.TestCase):
@@ -88,6 +89,7 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("sistema-terra/templates/fatura_detalhe.html", nomes)
         self.assertIn("sistema-terra/iniciar_sistema.bat", nomes)
         self.assertIn("sistema-terra/iniciar_sem_janela.vbs", nomes)
+        self.assertIn("sistema-terra/wait_for_server.py", nomes)
         self.assertFalse([nome for nome in nomes if nome.lower().endswith((".php", ".db", ".sqlite", ".sqlite3", ".sql"))])
         self.assertFalse(any(nome.startswith("sistema-terra/tests/") for nome in nomes))
 
@@ -101,9 +103,35 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("sys.executable", batch)
         self.assertIn("pythonw.exe", batch)
         self.assertIn("python 3 nao foi encontrado", batch)
+        self.assertIn("wait_for_server.py", batch)
+        self.assertNotIn("timeout /t 2", batch)
+        self.assertIn("sistema_terra.log", batch)
         self.assertIn("pyw -3", vbscript)
         self.assertIn("pythonw", vbscript)
+        self.assertIn("wait_for_server.py", vbscript)
+        self.assertIn("healthz", vbscript)
         self.assertIn("python ausente", vbscript)
+
+    def test_health_endpoint_identifies_the_running_application(self):
+        response = self.app_module.app.test_client().get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"service": "sistema-terra", "status": "ok"})
+
+    def test_startup_waiter_only_accepts_the_sistema_terra_health_response(self):
+        with patch.object(wait_for_server.http.client, "HTTPConnection") as connection_class, \
+             patch.dict(os.environ, {"PORT": "5000"}), \
+             patch("sys.stdout", io.StringIO()):
+            response = connection_class.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'{"service":"sistema-terra","status":"ok"}'
+            result = wait_for_server.wait_for_server()
+
+        self.assertEqual(result, 0)
+        connection_class.assert_called_once_with("127.0.0.1", 5000, timeout=2)
+        connection_class.return_value.request.assert_called_once_with(
+            "GET", "/healthz", headers={"Connection": "close"}
+        )
+        connection_class.return_value.close.assert_called_once_with()
 
     def test_invoice_reopening_reason_is_optional_in_the_ui(self):
         with open(os.path.join(database.BASE_DIR, "templates", "fatura_detalhe.html"), encoding="utf-8") as template:
