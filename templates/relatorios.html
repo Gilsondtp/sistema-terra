@@ -53,31 +53,59 @@
 <div class="card mb-4 no-print">
     <div class="card-header">
         <h5 class="mb-0 fw-bold text-primary">
-            <i class="fas fa-file-invoice-dollar me-1"></i> Emissão de Relatório Individual (Fatura)
+            <i class="fas fa-file-invoice-dollar me-1"></i> Relatório Individual por Cliente
         </h5>
     </div>
     <div class="card-body">
         <form id="formFiltroFatura" method="GET" action="{{ url_for('relatorios_page') }}">
             <div class="row g-3 align-items-end">
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label class="form-label fw-semibold">Cliente *</label>
-                    <select class="form-select" name="cliente_id" required onchange="this.form.submit()">
+                    <select class="form-select" name="cliente_id" required>
                         <option value="">Selecione um cliente</option>
                         {% for c in clientes %}
                             <option value="{{ c.id }}" {% if cliente_id == (c.id|string) %}selected{% endif %}>{{ c.nome }}</option>
                         {% endfor %}
                     </select>
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-semibold">Período mensal</label>
-                    <input type="month" class="form-control" name="periodo" value="{{ periodo }}" required onchange="this.form.submit()">
+                <div class="col-md-2">
+                    <label class="form-label fw-semibold">Tipo de consulta</label>
+                    <select class="form-select" name="tipo_periodo" id="tipo_periodo_relatorio" onchange="alternarFiltroPeriodoRelatorio()">
+                        <option value="mensal" {% if tipo_periodo == 'mensal' %}selected{% endif %}>Mensal (fatura)</option>
+                        <option value="intervalo" {% if tipo_periodo == 'intervalo' %}selected{% endif %}>Intervalo de datas</option>
+                    </select>
                 </div>
-                <div class="col-md-2 d-grid">
-                    <a class="btn btn-outline-secondary" href="{{ url_for('faturas_page', cliente_id=cliente_id, periodo=periodo) }}"><i class="fas fa-box-archive me-1"></i>Histórico</a>
+                <div class="col-md-3" id="campoPeriodoMensal">
+                    <label class="form-label fw-semibold">Período mensal</label>
+                    <input type="month" class="form-control" name="periodo" id="periodo_relatorio" value="{{ periodo }}" {% if tipo_periodo != 'mensal' %}disabled{% else %}required{% endif %}>
+                </div>
+                <div class="col-md-4 {% if tipo_periodo != 'intervalo' %}d-none{% endif %}" id="camposIntervaloDatas">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Data inicial</label>
+                            <input type="date" class="form-control" name="data_inicio" id="data_inicio_relatorio" value="{{ data_inicio }}" {% if tipo_periodo != 'intervalo' %}disabled{% else %}required{% endif %}>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Data final</label>
+                            <input type="date" class="form-control" name="data_fim" id="data_fim_relatorio" value="{{ data_fim }}" {% if tipo_periodo != 'intervalo' %}disabled{% else %}required{% endif %}>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="form-text mt-2">
-                A fatura do mês é exibida automaticamente ao selecionar cliente ou período. Meses fechados são consultados sem misturar os lançamentos do período corrente.
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
+                <div class="form-text">
+                    {% if tipo_periodo == 'intervalo' %}
+                        A consulta por intervalo não altera nem fecha faturas mensais.
+                    {% else %}
+                        O fechamento mensal continua disponível somente nesta consulta mensal.
+                    {% endif %}
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    {% if tipo_periodo == 'mensal' %}
+                        <a class="btn btn-outline-secondary" href="{{ url_for('faturas_page', cliente_id=cliente_id, periodo=periodo) }}"><i class="fas fa-box-archive me-1"></i>Histórico</a>
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary px-4"><i class="fas fa-search me-1"></i>Consultar</button>
+                </div>
             </div>
         </form>
     </div>
@@ -85,8 +113,10 @@
 
 {% if cliente_atual %}
     {% if fatura_gerada %}
-        <div class="alert {% if fatura_atual and fatura_atual.status == 'reaberta' %}alert-warning{% elif fatura_atual %}alert-success{% else %}alert-info{% endif %} no-print" role="status">
-            {% if fatura_atual and fatura_atual.status == 'reaberta' %}
+        <div class="alert {% if tipo_periodo == 'intervalo' %}alert-info{% elif fatura_atual and fatura_atual.status == 'reaberta' %}alert-warning{% elif fatura_atual %}alert-success{% else %}alert-info{% endif %} no-print" role="status">
+            {% if tipo_periodo == 'intervalo' %}
+                <i class="fas fa-calendar-day me-1"></i>Consulta de <strong>{{ cliente_atual.nome }}</strong> entre {{ data_inicio | data_br }} e {{ data_fim | data_br }}. Esta consulta não altera nem fecha faturas mensais.
+            {% elif fatura_atual and fatura_atual.status == 'reaberta' %}
                 <i class="fas fa-lock-open me-1"></i>Fatura de <strong>{{ cliente_atual.nome }}</strong> — {{ periodo }} — reaberta para revisão.
                 <a href="{{ url_for('fatura_detalhe_page', fatura_id=fatura_atual.id) }}" class="alert-link">Abrir auditoria e concluir revisão.</a>
             {% elif fatura_atual %}
@@ -96,7 +126,12 @@
                 <i class="fas fa-circle-info me-1"></i>Fatura aberta de <strong>{{ cliente_atual.nome }}</strong> — {{ periodo }}. O relatório e os valores calculados estão abaixo.
             {% endif %}
         </div>
+    {% elif tipo_periodo == 'intervalo' %}
+        <div class="alert alert-warning no-print" role="status">
+            Informe as datas inicial e final e clique em <strong>Consultar</strong> para gerar o relatório por intervalo.
+        </div>
     {% endif %}
+    {% if fatura_gerada %}
     <div class="card p-4 print-content" id="relatorio-gerado" tabindex="-1" data-gerado="{{ '1' if fatura_gerada else '0' }}">
         <!-- Cabeçalho da Fatura -->
         <div class="header-fatura">
@@ -108,8 +143,14 @@
             </p>
         </div>
 
-        <h2 class="fw-bold mb-1">FATURA</h2>
-        <div class="text-muted mb-3">Período: {{ periodo }}</div>
+        <h2 class="fw-bold mb-1">{% if tipo_periodo == 'intervalo' %}RELATÓRIO DE LANÇAMENTOS{% else %}FATURA{% endif %}</h2>
+        <div class="text-muted mb-3">
+            {% if tipo_periodo == 'intervalo' %}
+                Intervalo consultado: {{ data_inicio | data_br }} a {{ data_fim | data_br }}
+            {% else %}
+                Período mensal: {{ periodo }}
+            {% endif %}
+        </div>
 
         <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
             <div>
@@ -197,16 +238,22 @@
         <!-- Seção com Fatura Anterior, Observações e Resumo de Saldo Devedor -->
         <div class="row mt-3 g-3">
             <div class="col-md-6">
-                <div class="row g-2 mb-3">
-                    <div class="col-6">
-                        <label class="form-label fw-semibold small mb-1">Fatura Anterior R$</label>
-                        <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.fatura_anterior | moeda }}" readonly>
+                {% if tipo_periodo == 'mensal' %}
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold small mb-1">Fatura Anterior R$</label>
+                            <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.fatura_anterior | moeda }}" readonly>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold small mb-1">Pagtº R$</label>
+                            <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.pagamento_fatura_anterior | moeda }}" readonly>
+                        </div>
                     </div>
-                    <div class="col-6">
-                        <label class="form-label fw-semibold small mb-1">Pagtº R$</label>
-                        <input type="text" class="form-control bg-light fw-semibold" value="R$ {{ totais.pagamento_fatura_anterior | moeda }}" readonly>
+                {% else %}
+                    <div class="alert alert-light border small mb-3">
+                        Consulta informativa por intervalo; o fechamento mensal não é alterado.
                     </div>
-                </div>
+                {% endif %}
                 <div class="p-2 bg-light border rounded" style="min-height: 75px;">
                     <strong class="small">Observações:</strong><br>
                     {% if observacoes_relatorio %}
@@ -228,19 +275,27 @@
                     </tr>
                     {% endif %}
                     <tr>
-                        <th>Total da Fatura:</th>
+                        <th>{% if tipo_periodo == 'mensal' %}Total da Fatura{% else %}Total no Intervalo{% endif %}:</th>
                         <td class="text-end fw-semibold">R$ {{ totais.total_fatura | moeda }}</td>
                     </tr>
                     <tr>
                         <th>Total Pago:</th>
                         <td class="text-end text-success fw-semibold">R$ {{ totais.total_pago | moeda }}</td>
                     </tr>
+                    {% if tipo_periodo == 'intervalo' and totais.pagamento_fatura_anterior > 0 %}
+                    <tr>
+                        <th>Pagamentos de fatura anterior (incluídos no total pago):</th>
+                        <td class="text-end">R$ {{ totais.pagamento_fatura_anterior | moeda }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if tipo_periodo == 'mensal' %}
                     <tr>
                         <th>Saldo da Fatura Anterior:</th>
                         <td class="text-end">R$ {{ totais.saldo_fatura_anterior | moeda }}</td>
                     </tr>
+                    {% endif %}
                     <tr class="table-warning">
-                        <th class="fs-6"><strong>SALDO DEVEDOR:</strong></th>
+                        <th class="fs-6"><strong>{% if tipo_periodo == 'mensal' %}SALDO DEVEDOR{% else %}SALDO DO PERÍODO{% endif %}:</strong></th>
                         <td class="text-end fs-6"><strong>R$ {{ totais.saldo_devedor | moeda }}</strong></td>
                     </tr>
                 </table>
@@ -284,9 +339,10 @@
         <!-- Botões de Ação (Imprimir e Fechar Fatura) -->
         <div class="mt-4 d-flex flex-wrap gap-2 no-print">
             <button type="button" onclick="window.print()" class="btn btn-primary px-4">
-                <i class="fas fa-print me-1"></i> Imprimir Fatura
+                <i class="fas fa-print me-1"></i>{% if tipo_periodo == 'intervalo' %} Imprimir Relatório{% else %} Imprimir Fatura{% endif %}
             </button>
 
+            {% if tipo_periodo == 'mensal' %}
             {% if fatura_atual %}
                 <a class="btn btn-outline-secondary" href="{{ url_for('fatura_detalhe_page', fatura_id=fatura_atual.id) }}">
                     <i class="fas fa-clipboard-list me-1"></i>Ver detalhes e auditoria
@@ -295,6 +351,7 @@
                     <form method="POST" action="{{ url_for('relatorios_page') }}"
                           onsubmit="return confirm('Fechar novamente a fatura revisada e recalcular os saldos posteriores?');">
                         <input type="hidden" name="fechar_fatura" value="1">
+                        <input type="hidden" name="tipo_periodo" value="mensal">
                         <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
                         <input type="hidden" name="periodo" value="{{ periodo }}">
                         <input type="hidden" name="data_inicio" value="{{ data_inicio }}">
@@ -306,6 +363,7 @@
                 <form method="POST" action="{{ url_for('relatorios_page') }}"
                       onsubmit="return confirm('Arquivar a fatura de {{ periodo }}? Os lançamentos e serviços serão preservados para consulta histórica. O saldo de R$ {{ totais.saldo_devedor|moeda }} será transportado ao próximo período; Caixa e estoque não serão apagados nem estornados.');">
                     <input type="hidden" name="fechar_fatura" value="1">
+                    <input type="hidden" name="tipo_periodo" value="mensal">
                     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
                     <input type="hidden" name="periodo" value="{{ periodo }}">
                     <input type="hidden" name="data_inicio" value="{{ data_inicio }}">
@@ -315,14 +373,36 @@
                     </button>
                 </form>
             {% endif %}
+            {% endif %}
         </div>
     </div>
+    {% endif %}
 {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
+    function alternarFiltroPeriodoRelatorio() {
+        const tipo = document.getElementById('tipo_periodo_relatorio');
+        if (!tipo) return;
+        const porIntervalo = tipo.value === 'intervalo';
+        const campoMes = document.getElementById('campoPeriodoMensal');
+        const camposDatas = document.getElementById('camposIntervaloDatas');
+        const inputMes = document.getElementById('periodo_relatorio');
+        const inputInicio = document.getElementById('data_inicio_relatorio');
+        const inputFim = document.getElementById('data_fim_relatorio');
+        campoMes.classList.toggle('d-none', porIntervalo);
+        camposDatas.classList.toggle('d-none', !porIntervalo);
+        inputMes.disabled = porIntervalo;
+        inputMes.required = !porIntervalo;
+        inputInicio.disabled = !porIntervalo;
+        inputFim.disabled = !porIntervalo;
+        inputInicio.required = porIntervalo;
+        inputFim.required = porIntervalo;
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        alternarFiltroPeriodoRelatorio();
         const relatorio = document.getElementById('relatorio-gerado');
         if (relatorio && relatorio.dataset.gerado === '1') {
             relatorio.scrollIntoView({ behavior: 'smooth', block: 'start' });

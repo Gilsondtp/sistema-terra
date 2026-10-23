@@ -1,2 +1,11 @@
 __pycache__/
 sistema_terra.log
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+*.zip
+backups/
+hotfolder_output/
+sistema_terra_python.zip
+.venv/

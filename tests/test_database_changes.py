@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import sqlite3
@@ -80,6 +81,178 @@ class DatabaseChangeTests(unittest.TestCase):
             client_id, "Cliente CNPJ Teste", "", "", "", 0, "", "98.765.432/0001-10"
         )
         self.assertEqual(database.buscar_cliente(client_id)["cnpj"], "98765432000110")
+
+    def test_open_hotfolder_group_reprocesses_when_rip_page_index_is_corrected(self):
+        cliente_id = next(
+            cliente["id"] for cliente in database.listar_clientes()
+            if cliente["nome"].strip().upper() == "ITAPLAST"
+        )
+        produto_id = database.criar_produto(
+            "Chapa Teste RIP", 100, "2026-10-01", 45.00, 20.00, pasta_hotfolder="P724_TEST"
+        )
+        output_dir = os.path.join(self.temp_dir.name, "output", "P724_TEST")
+        source_dir = os.path.join(self.temp_dir.name, "rip")
+        os.makedirs(output_dir)
+        os.makedirs(source_dir)
+        names = [
+            "ItaplastGIULIASAFIRAcmpsC.TIF",
+            "ItaplastGIULIASAFIRAcmpsC [1].TIF",
+            "ItaplastGIULIASAFIRAcmpsM.TIF",
+            "ItaplastGIULIASAFIRAcmpsM [1].TIF",
+        ]
+        for name in names:
+            with open(os.path.join(output_dir, name), "wb") as file:
+                file.write(b"test TIFF")
+        with open(os.path.join(source_dir, "Itaplast_GIULIA_SAFIRA_cm.ps"), "wb") as file:
+            file.write(b"test PostScript")
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
+                     valor_entrega, valor_pagamento, fatura_anterior,
+                     pagamento_fatura_anterior, saldo_fatura_anterior, observacao)
+                VALUES (?, 'Itaplast', 1, 'hotfolder', '2026-10-23', 0, 0, 0, 0, 0,
+                        'Auto Hot Folder (724)')
+                """,
+                (cliente_id,),
+            )
+            lancamento_id = cursor.lastrowid
+            cursor = conn.execute(
+                """
+                INSERT INTO servicos
+                    (lancamento_id, produto_id, descricao, quantidade, valor,
+                     cores_detectadas, arquivos_origem, pasta_origem)
+                VALUES (?, ?, 'GIULIA SAFIRA', 2, 90, 'C, M', ?, '724')
+                """,
+                (lancamento_id, produto_id, json.dumps(names)),
+            )
+            servico_id = cursor.lastrowid
+            conn.execute(
+                "UPDATE produtos SET estoque_atual = 98, estoque_consumido = 2 WHERE id = ?",
+                (produto_id,),
+            )
+            for name in names:
+                color = "C" if "psC" in name else "M"
+                page = "1" if "[1]" in name else ""
+                path = os.path.abspath(os.path.join(output_dir, name))
+                conn.execute(
+                    """
+                    INSERT INTO arquivos_monitorados
+                        (caminho_completo, nome_arquivo, pasta_produto, chave_agrupamento,
+                         cor_detectada, pagina_detectada, lancamento_id, servico_id,
+                         data_lancamento, ignorado)
+                    VALUES (?, ?, 'P724_TEST', 'old-key', ?, ?, ?, ?, '2026-10-23', 0)
+                    """,
+                    (path, name, color, page, lancamento_id, servico_id),
+                )
+
+        hotfolder_monitor.limpar_e_corrigir_registros_monitorados()
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertIsNone(
+                conn.execute("SELECT 1 FROM lancamentos WHERE id = ?", (lancamento_id,)).fetchone()
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM arquivos_monitorados WHERE lancamento_id = ?", (lancamento_id,)).fetchone()[0],
+                0,
+            )
+
+        index = hotfolder_monitor.construir_indice_nomes_postscript(source_dir)
+        for name in sorted(names):
+            hotfolder_monitor.processar_arquivo_hotfolder(
+                os.path.join(output_dir, name),
+                "P724_TEST",
+                data_ref="2026-10-23",
+                arquivos_irmaos=names,
+                indice_nomes_ps=index,
+            )
+
+        with sqlite3.connect(self.db_path) as conn:
+            service = conn.execute(
+                """
+                SELECT s.quantidade, s.valor, s.descricao, s.cores_detectadas, l.id
+                FROM servicos s JOIN lancamentos l ON l.id = s.lancamento_id
+                WHERE s.produto_id = ? AND l.cliente_id = ? AND l.data_lancamento = '2026-10-23'
+                ORDER BY l.id DESC LIMIT 1
+                """,
+                (produto_id, cliente_id),
+            ).fetchone()
+            stock = conn.execute(
+                "SELECT estoque_atual, estoque_consumido FROM produtos WHERE id = ?", (produto_id,)
+            ).fetchone()
+            pages = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT pagina_detectada FROM arquivos_monitorados WHERE servico_id = (SELECT id FROM servicos WHERE lancamento_id = ?)",
+                    (service[4],),
+                )
+            }
+        self.assertEqual(service[0], 4)
+        self.assertEqual(service[1], 180.0)
+        self.assertEqual(service[2], "GIULIA SAFIRA")
+        self.assertEqual(set(service[3].split(", ")), {"C", "P2-C", "M", "P2-M"})
+        self.assertEqual(tuple(stock), (96, 4))
+        self.assertEqual(pages, {"", "2"})
+
+    def test_open_hotfolder_description_is_repaired_from_matching_postscript_name(self):
+        cliente_id = next(
+            cliente["id"] for cliente in database.listar_clientes()
+            if cliente["nome"].strip().upper() == "ITAPLAST"
+        )
+        output_dir = os.path.join(self.temp_dir.name, "output", "PTEST_DESC")
+        source_dir = os.path.join(self.temp_dir.name, "rip-source")
+        os.makedirs(output_dir)
+        os.makedirs(source_dir)
+        output_name = "ItaplastDOMQUIXOTEPps.TIF"
+        output_path = os.path.abspath(os.path.join(output_dir, output_name))
+        with open(output_path, "wb") as file:
+            file.write(b"test TIFF")
+        with open(os.path.join(source_dir, "Itaplast_DOM_QUIXOTE_p.ps"), "wb") as file:
+            file.write(b"test PostScript")
+        database.set_config({"ps_entrada_path": source_dir})
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, cliente_nome_original, identificado, origem, data_lancamento,
+                     valor_entrega, valor_pagamento, fatura_anterior,
+                     pagamento_fatura_anterior, saldo_fatura_anterior, observacao)
+                VALUES (?, 'Itaplast', 1, 'hotfolder', '2026-10-23', 0, 0, 0, 0, 0,
+                        'Auto Hot Folder (PTEST_DESC)')
+                """,
+                (cliente_id,),
+            )
+            lancamento_id = cursor.lastrowid
+            cursor = conn.execute(
+                """
+                INSERT INTO servicos
+                    (lancamento_id, produto_id, descricao, quantidade, valor,
+                     cores_detectadas, arquivos_origem, pasta_origem)
+                VALUES (?, NULL, 'DOMQUIXOT Ep', 1, 45, 'UNICA', ?, 'PTEST_DESC')
+                """,
+                (lancamento_id, json.dumps([output_name])),
+            )
+            servico_id = cursor.lastrowid
+            conn.execute(
+                """
+                INSERT INTO arquivos_monitorados
+                    (caminho_completo, nome_arquivo, pasta_produto, chave_agrupamento,
+                     cor_detectada, pagina_detectada, lancamento_id, servico_id,
+                     data_lancamento, ignorado)
+                VALUES (?, ?, 'PTEST_DESC', 'old-description-key', 'UNICA', '', ?, ?, '2026-10-23', 0)
+                """,
+                (output_path, output_name, lancamento_id, servico_id),
+            )
+
+        hotfolder_monitor.limpar_e_corrigir_registros_monitorados()
+
+        with sqlite3.connect(self.db_path) as conn:
+            service = conn.execute(
+                "SELECT descricao, quantidade, valor FROM servicos WHERE id = ?", (servico_id,)
+            ).fetchone()
+        self.assertEqual(tuple(service), ("DOM QUIXOTE", 1, 45.0))
 
     def test_known_compact_hotfolder_description_is_corrected_without_changing_amounts(self):
         with sqlite3.connect(self.db_path) as conn:

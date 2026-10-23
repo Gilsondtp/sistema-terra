@@ -283,6 +283,7 @@ def lancamento_diario():
         total_servicos_count=total_servicos_count,
         total_nao_identificados=total_nao_identificados,
         data_corte_default=(date.today().replace(day=1) - timedelta(days=1)).isoformat(),
+        hotfolder_total_detected=watcher_thread.total_detected,
     )
 
 
@@ -535,6 +536,18 @@ def produtos_page():
 def relatorios_page():
     if request.method == "POST" and request.form.get("fechar_fatura") == "1":
         cliente_id = request.form.get("cliente_id")
+        if (request.form.get("tipo_periodo") or "mensal") == "intervalo":
+            flash("O fechamento continua disponível somente para o período mensal.", "warning")
+            return redirect(
+                url_for(
+                    "relatorios_page",
+                    cliente_id=cliente_id or "",
+                    tipo_periodo="intervalo",
+                    data_inicio=request.form.get("data_inicio") or "",
+                    data_fim=request.form.get("data_fim") or "",
+                )
+            )
+
         periodo = (request.form.get("periodo") or "").strip()
         if not periodo:
             data_inicio_post = request.form.get("data_inicio") or ""
@@ -563,17 +576,37 @@ def relatorios_page():
     periodo = (request.values.get("periodo") or "").strip()
     data_inicio = (request.values.get("data_inicio") or "").strip()
     data_fim = (request.values.get("data_fim") or "").strip()
-    if not periodo and data_inicio:
-        periodo = data_inicio[:7]
-    if not periodo:
-        periodo = date.today().strftime("%Y-%m")
-    try:
-        data_inicio, data_fim = database.limites_periodo_fatura(periodo)
-    except ValueError:
-        periodo = date.today().strftime("%Y-%m")
-        data_inicio, data_fim = database.limites_periodo_fatura(periodo)
+    tipo_periodo = (request.values.get("tipo_periodo") or "").strip().lower()
+    if tipo_periodo not in {"mensal", "intervalo"}:
+        tipo_periodo = "intervalo" if data_inicio or data_fim else "mensal"
 
-    fatura_gerada = bool(cliente_id)
+    intervalo_valido = False
+    if tipo_periodo == "intervalo":
+        periodo = ""
+        if data_inicio and data_fim:
+            try:
+                inicio_validado = date.fromisoformat(data_inicio)
+                fim_validado = date.fromisoformat(data_fim)
+                if inicio_validado.isoformat() != data_inicio or fim_validado.isoformat() != data_fim:
+                    raise ValueError
+                if fim_validado < inicio_validado:
+                    flash("A data final deve ser igual ou posterior à data inicial.", "warning")
+                else:
+                    intervalo_valido = True
+            except ValueError:
+                flash("Informe um intervalo válido com as duas datas no formato correto.", "warning")
+        elif data_inicio or data_fim:
+            flash("Informe as datas inicial e final para consultar o intervalo.", "warning")
+    else:
+        if not periodo:
+            periodo = date.today().strftime("%Y-%m")
+        try:
+            data_inicio, data_fim = database.limites_periodo_fatura(periodo)
+        except ValueError:
+            periodo = date.today().strftime("%Y-%m")
+            data_inicio, data_fim = database.limites_periodo_fatura(periodo)
+
+    fatura_gerada = bool(cliente_id) and (tipo_periodo == "mensal" or intervalo_valido)
     lancamentos = []
     cliente_atual = None
     fatura_atual = None
@@ -600,24 +633,36 @@ def relatorios_page():
         except (TypeError, ValueError):
             cliente_atual = None
 
-        if cliente_atual:
-            fatura_atual = database.obter_fatura_periodo(int(cliente_id), periodo)
-            if fatura_atual:
-                lancamentos = database.listar_lancamentos({"fatura_id": fatura_atual["id"]})
-                abertura = float(fatura_atual["saldo_abertura"] or 0.0)
-            else:
+        if cliente_atual and fatura_gerada:
+            if tipo_periodo == "intervalo":
+                # Consulta livre: inclui lançamentos do intervalo mesmo se estiverem
+                # em faturas mensais arquivadas, sem criar ou fechar uma fatura.
                 lancamentos = database.listar_lancamentos(
                     {
                         "cliente_id": int(cliente_id),
                         "data_inicio": data_inicio,
                         "data_fim": data_fim,
-                        "somente_abertos": True,
                     }
                 )
-                try:
-                    abertura = database.obter_saldo_abertura_fatura(int(cliente_id), periodo)
-                except (ValueError, TypeError):
-                    abertura = float(cliente_atual["fatura_anterior"] or 0.0)
+                abertura = 0.0
+            else:
+                fatura_atual = database.obter_fatura_periodo(int(cliente_id), periodo)
+                if fatura_atual:
+                    lancamentos = database.listar_lancamentos({"fatura_id": fatura_atual["id"]})
+                    abertura = float(fatura_atual["saldo_abertura"] or 0.0)
+                else:
+                    lancamentos = database.listar_lancamentos(
+                        {
+                            "cliente_id": int(cliente_id),
+                            "data_inicio": data_inicio,
+                            "data_fim": data_fim,
+                            "somente_abertos": True,
+                        }
+                    )
+                    try:
+                        abertura = database.obter_saldo_abertura_fatura(int(cliente_id), periodo)
+                    except (ValueError, TypeError):
+                        abertura = float(cliente_atual["fatura_anterior"] or 0.0)
 
             pgto_fatura_ant_soma = 0.0
             for l in lancamentos:
@@ -647,12 +692,20 @@ def relatorios_page():
 
             totais["fatura_anterior"] = float(abertura or 0.0)
             totais["pagamento_fatura_anterior"] = pgto_fatura_ant_soma
-            totais["saldo_fatura_anterior"] = totais["fatura_anterior"] - pgto_fatura_ant_soma
+            if tipo_periodo == "intervalo":
+                totais["saldo_fatura_anterior"] = 0.0
+            else:
+                totais["saldo_fatura_anterior"] = totais["fatura_anterior"] - pgto_fatura_ant_soma
             totais["total_fatura"] = totais["servicos"] + totais["entrega"]
             totais["total_pago"] = totais["pagamento"] + pgto_fatura_ant_soma
-            totais["saldo_devedor"] = (
-                totais["servicos"] + totais["entrega"] - totais["pagamento"]
-            ) + totais["saldo_fatura_anterior"]
+            if tipo_periodo == "intervalo":
+                # Pagamentos de dívida antiga aparecem no total pago, mas não
+                # reduzem o saldo dos serviços lançados dentro do intervalo.
+                totais["saldo_devedor"] = totais["total_fatura"] - totais["pagamento"]
+            else:
+                totais["saldo_devedor"] = (
+                    totais["servicos"] + totais["entrega"] - totais["pagamento"]
+                ) + totais["saldo_fatura_anterior"]
 
     produtos_utilizados_ordenados = sorted(produtos_utilizados.items(), key=lambda x: x[0].lower())
 
@@ -662,6 +715,8 @@ def relatorios_page():
         clientes=clientes,
         cliente_id=str(cliente_id),
         cliente_atual=cliente_atual,
+        tipo_periodo=tipo_periodo,
+        intervalo_valido=intervalo_valido,
         periodo=periodo,
         data_inicio=data_inicio,
         data_fim=data_fim,
@@ -674,7 +729,6 @@ def relatorios_page():
         fatura_gerada=fatura_gerada,
         fatura_atual=fatura_atual,
     )
-
 
 # ==============================================================================
 # 6. HISTÓRICO E CORREÇÃO CONTROLADA DE FATURAS
@@ -1122,6 +1176,18 @@ def configuracoes_page():
         cfg=cfg,
         produtos=produtos,
         ultimos_arquivos=[dict(r) for r in ultimos_arquivos],
+    )
+
+
+@app.route("/hotfolder/status", methods=["GET"])
+def hotfolder_status():
+    cfg = database.get_config()
+    return jsonify(
+        {
+            "total_detected": int(watcher_thread.total_detected or 0),
+            "last_scan": watcher_thread.last_scan,
+            "active": cfg.get("hotfolder_ativo", "1") == "1",
+        }
     )
 
 

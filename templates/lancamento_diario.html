@@ -2,6 +2,18 @@
 {% block title %}Lanc. Diário - {{ site_title }}{% endblock %}
 
 {% block content %}
+<div id="operacaoFeedback" class="d-none position-fixed bottom-0 end-0 m-3" style="z-index: 2000; width: min(360px, calc(100vw - 2rem));" role="status" aria-live="polite" aria-atomic="true">
+    <div class="card border-primary shadow">
+        <div class="card-body py-2 px-3 d-flex align-items-center gap-2">
+            <span class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></span>
+            <span id="operacaoFeedbackTexto">Processando...</span>
+        </div>
+        <div class="progress rounded-0" style="height: 4px;" aria-label="Operação em andamento">
+            <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+        </div>
+    </div>
+</div>
+
 <!-- Cabeçalho de Impressão (visível apenas na impressão) -->
 <div class="d-none d-print-block mb-3 border-bottom pb-2">
     <div class="d-flex justify-content-between align-items-center">
@@ -23,9 +35,18 @@
             <h5 class="mb-0 fw-bold text-primary">
                 <i class="fas fa-bolt me-1"></i> LANC. DIÁRIO — Monitoramento e Serviços
             </h5>
-            <span class="badge bg-success-subtle text-success border border-success-subtle">
-                <i class="fas fa-satellite-dish me-1"></i> Hot Folder Ativo
-            </span>
+            {% if cfg.get('hotfolder_ativo', '1') == '1' %}
+                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                    <i class="fas fa-satellite-dish me-1"></i> Hot Folder Ativo
+                </span>
+                <span class="badge bg-info-subtle text-info border border-info-subtle">
+                    <i class="fas fa-arrows-rotate me-1"></i> Lista atualizada automaticamente
+                </span>
+            {% else %}
+                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">
+                    <i class="fas fa-pause-circle me-1"></i> Hot Folder pausado
+                </span>
+            {% endif %}
         </div>
         <div class="d-flex flex-wrap gap-2">
             <button type="button" class="btn btn-primary btn-sm px-3 fw-semibold" onclick="abrirModalNovoLancamento()">
@@ -34,7 +55,7 @@
             <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
                 <i class="fas fa-vial me-1"></i> Testar / Simular Hot Folder
             </button>
-            <form method="POST" action="{{ url_for('escanear_hotfolder_manual') }}" class="d-inline">
+            <form method="POST" action="{{ url_for('escanear_hotfolder_manual') }}" class="d-inline" data-processing-message="Atualizando a pasta Hot Folder...">
                 <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
                 <button type="submit" class="btn btn-outline-success btn-sm" title="Varre imediatamente a pasta Hot Folder">
                     <i class="fas fa-sync-alt me-1"></i> Atualizar Pasta
@@ -47,17 +68,7 @@
     </div>
 
     <div class="card-body py-3">
-        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3" role="region" aria-label="Fechamento mensal">
-            <div class="d-flex align-items-center gap-3">
-                <i class="fas fa-calendar-check text-danger fs-3" aria-hidden="true"></i>
-                <div>
-                    <div class="fw-bold text-danger">Fechamento do Mês / Virada de Mês</div>
-                    <div class="small text-dark">
-                        Transfere saldos para a Fatura Anterior e organiza os lançamentos do novo mês.
-                        <strong>O Caixa é preservado</strong> — receitas, despesas e recebimentos não são apagados.
-                    </div>
-                </div>
-            </div>
+        <div class="alert alert-warning d-flex justify-content-end align-items-center mb-3" role="region" aria-label="Fechamento mensal">
             <button type="button" class="btn btn-danger fw-bold px-3" data-bs-toggle="modal" data-bs-target="#modalViradaMes">
                 <i class="fas fa-calendar-check me-1"></i> Abrir Fechamento Mensal
             </button>
@@ -80,13 +91,13 @@
                 <!-- Data Selecionada (atualiza ao selecionar) -->
                 <div class="col-md-2" id="box_filtro_data_dia">
                     <label class="form-label small fw-bold mb-1">Data (ou vazio = todas)</label>
-                    <input type="date" class="form-control form-control-sm" id="input_data_diario" name="data" value="{{ data_sel }}" onchange="this.form.submit()">
+                    <input type="date" class="form-control form-control-sm" id="input_data_diario" name="data" value="{{ data_sel }}" onchange="this.form.requestSubmit()">
                 </div>
 
                 <!-- Filtro por Cliente -->
                 <div class="col-md-2">
                     <label class="form-label small fw-bold mb-1">Cliente</label>
-                    <select class="form-select form-select-sm" name="cliente_id" onchange="this.form.submit()">
+                    <select class="form-select form-select-sm" name="cliente_id" onchange="this.form.requestSubmit()">
                         <option value="">Todos os clientes</option>
                         <option value="nao_identificado" class="text-danger fw-bold" {% if cliente_id == 'nao_identificado' %}selected{% endif %}>
                             ⚠ NÃO IDENTIFICADOS
@@ -100,7 +111,7 @@
                 <!-- Filtro por Produto (Chapa) -->
                 <div class="col-md-2">
                     <label class="form-label small fw-bold mb-1">Produto (Chapa)</label>
-                    <select class="form-select form-select-sm" name="produto_id" onchange="this.form.submit()">
+                    <select class="form-select form-select-sm" name="produto_id" onchange="this.form.requestSubmit()">
                         <option value="">Todos os produtos</option>
                         {% for p in produtos %}
                             <option value="{{ p.id }}" {% if produto_id == (p.id|string) %}selected{% endif %}>{{ p.nome }}</option>
@@ -163,7 +174,7 @@
                                                 {% endif %}
                                             </span>
                                             <!-- Atribuição rápida de cliente diretamente na linha -->
-                                            <form method="POST" action="{{ url_for('atribuir_cliente_route') }}" class="d-flex gap-1 align-items-center no-print mt-1">
+                                            <form method="POST" action="{{ url_for('atribuir_cliente_route') }}" class="d-flex gap-1 align-items-center no-print mt-1" data-processing-message="Salvando a identificação do cliente...">
                                                 <input type="hidden" name="lancamento_id" value="{{ item.lancamento_id }}">
                                                 <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
                                                 <input type="hidden" name="salvar_apelido" value="1">
@@ -297,7 +308,7 @@
 <div class="modal fade" id="modalExcluirLancamento" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form method="POST" action="{{ url_for('excluir_lancamento_route') }}">
+            <form method="POST" action="{{ url_for('excluir_lancamento_route') }}" data-processing-message="Excluindo lançamento e atualizando o estoque...">
                 <input type="hidden" name="id" id="input_excluir_lanc_id">
                 <input type="hidden" name="servico_id" id="input_excluir_serv_id">
                 <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
@@ -321,7 +332,7 @@
 <div class="modal fade" id="modalViradaMes" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <form method="POST" action="{{ url_for('virada_mes_route') }}"
+            <form method="POST" action="{{ url_for('virada_mes_route') }}" data-processing-message="Executando o fechamento mensal..."
                   onsubmit="return confirm('Arquivar as faturas até a data escolhida? Os detalhes serão preservados para consulta, os lançamentos do período seguinte ficarão independentes e o Caixa/estoque não serão alterados.');">
                 <input type="hidden" name="modo_limpeza" value="manter_apos_corte">
                 <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
@@ -370,7 +381,7 @@
 <div class="modal fade" id="modalSimuladorHotFolder" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <form method="POST" action="{{ url_for('simular_arquivos_hotfolder') }}">
+            <form method="POST" action="{{ url_for('simular_arquivos_hotfolder') }}" data-processing-message="Processando os arquivos de teste do Hot Folder...">
                 <input type="hidden" name="redirect_to" value="{{ url_for('lancamento_diario') }}">
                 <div class="modal-header bg-dark text-white">
                     <h5 class="modal-title fw-bold">
@@ -460,7 +471,91 @@ gilson cartaz k</textarea>
         } else if (!inputData.value) {
             inputData.value = '{{ hoje_iso }}';
         }
-        document.getElementById('formFiltroDiario').submit();
+        document.getElementById('formFiltroDiario').requestSubmit();
     }
+
+    function mostrarIndicadorProcessamento(mensagem) {
+        const indicador = document.getElementById('operacaoFeedback');
+        const texto = document.getElementById('operacaoFeedbackTexto');
+        if (!indicador || window.terraOperacaoEmAndamento) return;
+        window.terraOperacaoEmAndamento = true;
+        texto.textContent = mensagem || 'Processando operação...';
+        indicador.classList.remove('d-none');
+    }
+
+    document.addEventListener('submit', function (evento) {
+        if (evento.defaultPrevented || !(evento.target instanceof HTMLFormElement)) return;
+        const formulario = evento.target;
+        const mensagem = formulario.dataset.processingMessage ||
+            (formulario.method.toUpperCase() === 'GET' ? 'Atualizando a consulta...' : 'Salvando alterações...');
+        mostrarIndicadorProcessamento(mensagem);
+    });
+
+    function marcarFormularioAlterado(evento) {
+        const formulario = evento.target.closest && evento.target.closest('form');
+        if (formulario) formulario.dataset.alterado = '1';
+    }
+    document.addEventListener('input', marcarFormularioAlterado);
+    document.addEventListener('change', marcarFormularioAlterado);
+    document.addEventListener('hidden.bs.modal', function (evento) {
+        evento.target.querySelectorAll('form').forEach(function (formulario) {
+            delete formulario.dataset.alterado;
+        });
+    });
+
+    (function acompanharNovosLancamentos() {
+        const urlStatus = "{{ url_for('hotfolder_status') }}";
+        let totalObservado = Number("{{ hotfolder_total_detected|default(0) }}") || 0;
+        let atualizacaoPendente = false;
+        let consultaEmAndamento = false;
+
+        function podeAtualizarSemInterromperEdicao() {
+            const focoEmCampo = document.activeElement &&
+                document.activeElement.matches('input, select, textarea, [contenteditable="true"]');
+            const formularioAlterado = Array.from(document.forms).some(
+                formulario => formulario.dataset.alterado === '1'
+            );
+            return document.visibilityState === 'visible' &&
+                !document.querySelector('.modal.show') &&
+                !focoEmCampo &&
+                !formularioAlterado &&
+                !window.terraOperacaoEmAndamento;
+        }
+
+        async function consultarStatus() {
+            if (consultaEmAndamento || document.visibilityState !== 'visible') return;
+            consultaEmAndamento = true;
+            try {
+                const resposta = await fetch(urlStatus, {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                if (!resposta.ok) return;
+                const status = await resposta.json();
+                if (!status.active) return;
+
+                const totalAtual = Number(status.total_detected || 0);
+                if (totalAtual < totalObservado) {
+                    totalObservado = totalAtual;
+                    atualizacaoPendente = false;
+                } else if (totalAtual > totalObservado) {
+                    totalObservado = totalAtual;
+                    atualizacaoPendente = true;
+                }
+
+                if (atualizacaoPendente && podeAtualizarSemInterromperEdicao()) {
+                    atualizacaoPendente = false;
+                    mostrarIndicadorProcessamento('Novos lançamentos detectados. Atualizando a lista...');
+                    window.setTimeout(function () { window.location.reload(); }, 600);
+                }
+            } catch (erro) {
+                // Uma falha temporária de conexão não interrompe a tela; a próxima consulta tenta novamente.
+            } finally {
+                consultaEmAndamento = false;
+            }
+        }
+
+        window.setInterval(consultarStatus, 5000);
+    })();
 </script>
 {% endblock %}

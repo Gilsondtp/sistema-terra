@@ -2,7 +2,7 @@
 <div class="modal fade" id="modalLancamento" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
-            <form id="formModalLancamento" method="POST" action="{{ url_for('salvar_lancamento') }}">
+            <form id="formModalLancamento" method="POST" action="{{ url_for('salvar_lancamento') }}" data-processing-message="Salvando o lançamento...">
                 <input type="hidden" name="acao" id="modal_lanc_acao" value="criar">
                 <input type="hidden" name="id" id="modal_lanc_id" value="">
                 <input type="hidden" name="cliente_nome_original" id="modal_lanc_cli_orig" value="">

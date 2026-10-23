@@ -45,6 +45,71 @@ class HotFolderParserTests(unittest.TestCase):
                 base, color, _ = hotfolder_monitor.extrair_cor_e_base(filename)
                 self.assertEqual((base, color), expected)
 
+    def test_rip_bracketed_outputs_count_as_next_page_when_unindexed_sibling_exists(self):
+        siblings = (
+            "ItaplastGIULIASAFIRAcmpsC.TIF",
+            "ItaplastGIULIASAFIRAcmpsC [1].TIF",
+            "ItaplastGIULIASAFIRAcmpsM.TIF",
+            "ItaplastGIULIASAFIRAcmpsM [1].TIF",
+        )
+        parsed = {
+            name: hotfolder_monitor.extrair_cor_e_base(name, siblings)
+            for name in siblings
+        }
+
+        self.assertEqual(parsed[siblings[0]], ("ItaplastGIULIASAFIRAcm", "C", None))
+        self.assertEqual(parsed[siblings[1]], ("ItaplastGIULIASAFIRAcm", "C", "2"))
+        self.assertEqual(parsed[siblings[2]], ("ItaplastGIULIASAFIRAcm", "M", None))
+        self.assertEqual(parsed[siblings[3]], ("ItaplastGIULIASAFIRAcm", "M", "2"))
+        self.assertEqual(
+            {(color, int(page or 1)) for _, color, page in parsed.values()},
+            {("C", 1), ("C", 2), ("M", 1), ("M", 2)},
+        )
+        self.assertEqual(
+            hotfolder_monitor.extrair_cor_e_base(siblings[1], [siblings[1]]),
+            ("ItaplastGIULIASAFIRAcm", "C", "1"),
+        )
+
+    def test_postscript_names_restore_lost_word_boundaries_and_drop_color_selection(self):
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="terra-ps-index-") as source_dir:
+            source_names = (
+                "Itaplast_DOM_QUIXOTE_p.ps",
+                "Itaplast_GIULIA_SAFIRA_cm.ps",
+                "Itaplast_TOCA_DO_JEANS_m_p.ps",
+            )
+            for name in source_names:
+                open(os.path.join(source_dir, name), "wb").close()
+
+            index = hotfolder_monitor.construir_indice_nomes_postscript(source_dir)
+            files = {
+                "ItaplastDOMQUIXOTEPps.TIF": "DOM QUIXOTE",
+                "ItaplastGIULIASAFIRAcmpsC.TIF": "GIULIA SAFIRA",
+                "ItaplastTOCADOJEANSmpps.TIF": "TOCA DO JEANS",
+            }
+            client = {"id": 12, "nome": "ITAPLAST", "apelidos": "itaplast"}
+
+            for output_name, expected_service in files.items():
+                with self.subTest(output_name=output_name):
+                    base, _, _ = hotfolder_monitor.extrair_cor_e_base(output_name)
+                    restored, matched = hotfolder_monitor.restaurar_base_nome_postscript(base, index)
+                    parsed = hotfolder_monitor.identificar_cliente_e_servico(restored, [client])
+                    self.assertTrue(matched)
+                    self.assertEqual(parsed["cliente_id"], 12)
+                    self.assertEqual(parsed["descricao_servico"], expected_service)
+
+    def test_ambiguous_postscript_names_are_not_guessed(self):
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="terra-ps-ambiguous-") as source_dir:
+            for name in ("Itaplast_JOB_ONE_c.ps", "ItaplastJOBONEc.ps"):
+                open(os.path.join(source_dir, name), "wb").close()
+            index = hotfolder_monitor.construir_indice_nomes_postscript(source_dir)
+            self.assertNotIn("itaplastjobonec", index)
+
     def test_confirmed_rip_collapsed_name_keeps_underscores_as_separators(self):
         client = {"id": 20, "nome": "Terra Fotolito", "apelidos": "terrafotolito"}
         self.assertEqual(

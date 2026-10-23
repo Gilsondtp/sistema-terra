@@ -302,6 +302,7 @@ def limpar_e_corrigir_registros_monitorados():
             pass
         cfg = get_config()
         data_minima = (cfg.get("hotfolder_data_minima") or "2026-10-01").strip()
+        indice_nomes_ps = obter_indice_nomes_postscript(cfg.get("ps_entrada_path"))
 
         # Corrige pontualmente saldos confirmados no fechamento de Setembro -> Outubro
         # para instalações que ainda tenham os valores antigos no banco local.
@@ -355,7 +356,7 @@ def limpar_e_corrigir_registros_monitorados():
                     )
 
         rows = conn.execute(
-            "SELECT id, caminho_completo, nome_arquivo, pasta_produto, cor_detectada, lancamento_id, data_lancamento, ignorado FROM arquivos_monitorados"
+            "SELECT id, caminho_completo, nome_arquivo, pasta_produto, cor_detectada, pagina_detectada, lancamento_id, servico_id, data_lancamento, ignorado FROM arquivos_monitorados"
         ).fetchall()
         # Um fechamento arquivado nunca deve ser apagado/reprocessado pela limpeza automática.
         lancamentos_arquivados = {
@@ -363,36 +364,90 @@ def limpar_e_corrigir_registros_monitorados():
             for row in conn.execute("SELECT id FROM lancamentos WHERE fatura_id IS NOT NULL").fetchall()
         }
 
-        # Reprocessa automaticamente registros que tinham ficado com sufixo residual 'ps C/K/M/Y'
-        # ou cuja cor_detectada mudou com o novo parser (ex: antes 'UNICA' e agora 'C'/'M'/'Y'/'K')
+        # Reprocessa registros abertos quando a leitura de cor ou página mudou.
+        # Páginas só são recalculadas se todos os TIFFs do lançamento ainda estiverem no disco.
         servs_ps = conn.execute(
             """
-            SELECT s.id, s.lancamento_id, s.descricao, s.quantidade, s.produto_id
+            SELECT s.id, s.lancamento_id, s.descricao, s.quantidade, s.produto_id, l.cliente_id
             FROM servicos s
             JOIN lancamentos l ON s.lancamento_id = l.id
             WHERE l.origem = 'hotfolder' AND l.fatura_id IS NULL
             """
         ).fetchall()
+        arquivos_por_servico = {}
+        for item in rows:
+            if item["servico_id"] and not item["ignorado"]:
+                arquivos_por_servico.setdefault(int(item["servico_id"]), []).append(item)
+        clientes_para_parsing = listar_clientes() if indice_nomes_ps else []
+
         lids_reprocessar = set()
         descricoes_corrigir = []
         for sv in servs_ps:
             desc_sv = (sv["descricao"] or "").strip()
-            chave_desc = re.sub(r"[^a-z0-9]", "", desc_sv.lower())
+            chave_desc = normalizar_compacto(desc_sv)
             if chave_desc in DESCRICOES_RIP_COMPACTAS:
                 desc_corrigida = DESCRICOES_RIP_COMPACTAS[chave_desc]
                 if desc_sv != desc_corrigida:
                     descricoes_corrigir.append((desc_corrigida, sv["id"]))
                     desc_sv = desc_corrigida
+
+            if indice_nomes_ps:
+                arquivos_servico = arquivos_por_servico.get(int(sv["id"]), [])
+                nomes_servico = [item["nome_arquivo"] for item in arquivos_servico]
+                for item in arquivos_servico:
+                    base_nome, _, _ = extrair_cor_e_base(item["nome_arquivo"], nomes_servico)
+                    base_restaurada, encontrou_ps = restaurar_base_nome_postscript(
+                        base_nome, indice_nomes_ps
+                    )
+                    if not encontrou_ps:
+                        continue
+                    info_nome = identificar_cliente_e_servico(
+                        base_restaurada, clientes_para_parsing
+                    )
+                    if sv["cliente_id"] and info_nome["cliente_id"] != sv["cliente_id"]:
+                        continue
+                    if not sv["cliente_id"] and info_nome["cliente_id"] is not None:
+                        continue
+
+                    desc_corrigida = (info_nome["descricao_servico"] or "").strip()
+                    chave_corrigida = normalizar_compacto(desc_corrigida)
+                    chave_atual = normalizar_compacto(desc_sv)
+                    sufixo_selecao = (
+                        chave_atual[len(chave_corrigida):]
+                        if chave_corrigida and chave_atual.startswith(chave_corrigida)
+                        else ""
+                    )
+                    sufixo_confirmado = (
+                        bool(sufixo_selecao)
+                        and len(sufixo_selecao) <= 4
+                        and set(sufixo_selecao).issubset(set("cmykp"))
+                        and len(set(sufixo_selecao)) == len(sufixo_selecao)
+                    )
+                    if (
+                        desc_corrigida
+                        and desc_sv != desc_corrigida
+                        and (chave_atual == chave_corrigida or sufixo_confirmado)
+                    ):
+                        descricoes_corrigir.append((desc_corrigida, sv["id"]))
+                        desc_sv = desc_corrigida
+                        break
+
             if re.search(r"(?:\b(?:ps|pdf|cdr|eps)\s+[cmykCMYK]|(?:ps|pdf|cdr|eps)[cmykCMYK])$", desc_sv, flags=re.IGNORECASE):
                 lids_reprocessar.add(sv["lancamento_id"])
 
-        # Atualiza somente a descrição já lançada deste caso conhecido; quantidade e estoque ficam intactos.
+        # Atualiza descrições apoiadas pelo nome de origem; quantidade e estoque ficam intactos.
         if descricoes_corrigir:
             with conn:
                 conn.executemany(
                     "UPDATE servicos SET descricao = ? WHERE id = ?",
                     descricoes_corrigir,
                 )
+
+        arquivos_por_lancamento = {}
+        irmaos_por_pasta = {}
+        for item in rows:
+            if item["lancamento_id"] and not item["ignorado"]:
+                arquivos_por_lancamento.setdefault(int(item["lancamento_id"]), []).append(item)
 
         for r in rows:
             if (
@@ -401,9 +456,39 @@ def limpar_e_corrigir_registros_monitorados():
                 and int(r["lancamento_id"]) not in lancamentos_arquivados
                 and eh_arquivo_tiff_valido(r["nome_arquivo"])
             ):
-                _, cor_nova, _ = extrair_cor_e_base(r["nome_arquivo"])
+                lancamento_id = int(r["lancamento_id"])
+                grupo_arquivos = arquivos_por_lancamento.get(lancamento_id, [])
+                nomes_irmaos = [item["nome_arquivo"] for item in grupo_arquivos]
+                caminho_arquivo = r["caminho_completo"] or ""
+                pasta_arquivo = os.path.dirname(caminho_arquivo) if caminho_arquivo else ""
+                if pasta_arquivo:
+                    chave_pasta = os.path.normcase(os.path.abspath(pasta_arquivo))
+                    if chave_pasta not in irmaos_por_pasta:
+                        try:
+                            irmaos_por_pasta[chave_pasta] = [
+                                nome for nome in os.listdir(pasta_arquivo)
+                                if eh_arquivo_tiff_valido(nome)
+                            ]
+                        except OSError:
+                            irmaos_por_pasta[chave_pasta] = []
+                    if irmaos_por_pasta[chave_pasta]:
+                        nomes_irmaos = irmaos_por_pasta[chave_pasta]
+                _, cor_nova, pagina_nova = extrair_cor_e_base(r["nome_arquivo"], nomes_irmaos)
                 if (r["cor_detectada"] or "UNICA") != cor_nova:
-                    lids_reprocessar.add(r["lancamento_id"])
+                    lids_reprocessar.add(lancamento_id)
+                    continue
+
+                pagina_anterior = str(r["pagina_detectada"] or "")
+                pagina_atualizada = str(pagina_nova or "")
+                if pagina_anterior != pagina_atualizada and grupo_arquivos:
+                    # Não remove um lançamento se os arquivos já tiverem sido retirados
+                    # do Output; nesse caso não há como reconstruí-lo integralmente.
+                    todos_arquivos_disponiveis = all(
+                        item["caminho_completo"] and os.path.exists(item["caminho_completo"])
+                        for item in grupo_arquivos
+                    )
+                    if todos_arquivos_disponiveis:
+                        lids_reprocessar.add(lancamento_id)
 
         if lids_reprocessar:
             with conn:
@@ -503,6 +588,85 @@ def normalizar_compacto(texto):
     return re.sub(r"[^a-z0-9]", "", s)
 
 
+_PS_INDICE_CACHE_TTL = 15.0
+_PS_INDICE_LOCK = threading.Lock()
+_PS_INDICE_CACHE_PATH = None
+_PS_INDICE_CACHE_AT = 0.0
+_PS_INDICE_CACHE = {}
+
+
+def construir_indice_nomes_postscript(diretorio_raiz):
+    """Indexa nomes .ps por forma compacta para reconstituir os separadores perdidos no RIP."""
+    indice = {}
+    ambiguos = set()
+    if not diretorio_raiz or not os.path.isdir(diretorio_raiz):
+        return indice
+
+    for pasta_atual, subpastas, arquivos in os.walk(diretorio_raiz, topdown=True):
+        subpastas[:] = sorted(
+            pasta for pasta in subpastas
+            if not pasta.startswith((".", "~"))
+        )
+        for nome in arquivos:
+            nome_base, extensao = os.path.splitext(nome)
+            if extensao.lower() != ".ps" or nome.startswith((".", "~")):
+                continue
+            chave = normalizar_compacto(nome_base)
+            if not chave or chave in ambiguos:
+                continue
+            nome_anterior = indice.get(chave)
+            if nome_anterior is not None and nome_anterior != nome_base:
+                # Duas grafias diferentes com a mesma forma compacta não podem ser
+                # associadas com segurança ao TIFF; evita escolher o nome errado.
+                indice.pop(chave, None)
+                ambiguos.add(chave)
+            else:
+                indice[chave] = nome_base
+    return indice
+
+
+def obter_indice_nomes_postscript(diretorio_raiz):
+    """Reusa por poucos segundos o índice do RIP, sem percorrer a rede em cada TIFF."""
+    global _PS_INDICE_CACHE_PATH, _PS_INDICE_CACHE_AT, _PS_INDICE_CACHE
+    if not diretorio_raiz or not os.path.isdir(diretorio_raiz):
+        return {}
+
+    caminho = os.path.normcase(os.path.abspath(os.path.expanduser(str(diretorio_raiz))))
+    agora = time.monotonic()
+    with _PS_INDICE_LOCK:
+        if (
+            caminho == _PS_INDICE_CACHE_PATH
+            and agora - _PS_INDICE_CACHE_AT < _PS_INDICE_CACHE_TTL
+        ):
+            return dict(_PS_INDICE_CACHE)
+
+        _PS_INDICE_CACHE = construir_indice_nomes_postscript(caminho)
+        _PS_INDICE_CACHE_PATH = caminho
+        _PS_INDICE_CACHE_AT = agora
+        return dict(_PS_INDICE_CACHE)
+
+
+def restaurar_base_nome_postscript(base_nome, indice_nomes=None):
+    """Restaura a grafia do .ps correspondente e remove o código de seleção de cores do serviço."""
+    chave = normalizar_compacto(base_nome)
+    nome_original = (indice_nomes or {}).get(chave)
+    if not nome_original:
+        return base_nome, False
+
+    # No RIP Navigator os códigos finais _c, _cm, _my, _cmyk e _p indicam
+    # a separação selecionada, não fazem parte do nome do serviço. Alguns nomes
+    # usam mais de um código em sequência, por exemplo _m_p.
+    for _ in range(3):
+        sufixo = re.search(r"(?:[_\s.\-]+)([cmyk]{1,4}|p)$", nome_original, flags=re.IGNORECASE)
+        if not sufixo:
+            break
+        codigo = sufixo.group(1).lower()
+        if codigo != "p" and len(set(codigo)) != len(codigo):
+            break
+        nome_original = nome_original[: sufixo.start()].strip(" _-.")
+    return nome_original, True
+
+
 def extrair_variantes_dimensao(texto):
     """
     Se o texto contiver dimensões numéricas como '530 x 660', '660x530', '510 x 400',
@@ -554,6 +718,20 @@ def _base_para_comparar_arquivos_cor(texto):
     if m_pag and not re.search(r"\d\s*[xX]\s*\d{1,3}$", base):
         base = base[:m_pag.start()].strip(" _-.()[]")
     return normalizar_compacto(base)
+
+
+def _irmao_sem_indice_colchete(stem_com_indice, arquivos_irmaos):
+    """Indica quando o sufixo RIP [n] diferencia páginas homônimas no Output."""
+    correspondencia = re.search(r"\s+\[(\d{1,3})\]$", str(stem_com_indice or ""))
+    if not correspondencia:
+        return False
+
+    stem_sem_indice = stem_com_indice[: correspondencia.start()].rstrip()
+    stem_alvo = stem_sem_indice.casefold()
+    return any(
+        os.path.splitext(os.path.basename(str(irmao)))[0].strip().casefold() == stem_alvo
+        for irmao in (arquivos_irmaos or [])
+    )
 
 
 def _irmaos_confirmam_cor(stem_atual, cor_candidata, arquivos_irmaos):
@@ -630,6 +808,12 @@ def extrair_cor_e_base(nome_arquivo, arquivos_irmaos=None):
             if not re.search(r"\d\s*[xX]\s*\d{1,3}$", original_stem):
                 if not pagina:
                     pagina = m_pag_exp.group(1) or m_pag_exp.group(2)
+                    # O RIP salva a primeira página sem índice e a segunda como [1].
+                    # Só aplica o deslocamento se o TIFF irmão sem [n] existir;
+                    # números explícitos em outros padrões continuam 1-based.
+                    m_indice_colchete = re.search(r"\s+\[(\d{1,3})\]$", original_stem)
+                    if m_indice_colchete and _irmao_sem_indice_colchete(original_stem, arquivos_irmaos):
+                        pagina = str(int(m_indice_colchete.group(1)) + 1)
                 original_stem = original_stem[: m_pag_exp.start()].strip(" _-.()[]")
                 mudou = True
 
@@ -925,7 +1109,13 @@ def resolver_produto_por_pasta(nome_pasta, lista_produtos=None):
     return None
 
 
-def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=None, arquivos_irmaos=None):
+def processar_arquivo_hotfolder(
+    caminho_arquivo,
+    nome_pasta_produto,
+    data_ref=None,
+    arquivos_irmaos=None,
+    indice_nomes_ps=None,
+):
     """
     Processa um arquivo individual .tif/.tiff/.tff detectado dentro de uma subpasta do Hot Folder.
     Agrupa todas as cores/chapas do mesmo serviço em 1 ÚNICO lançamento/serviço com a quantidade total de cores.
@@ -986,6 +1176,11 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
     if not base_nome:
         conn.close()
         return None
+
+    # O RIP costuma remover os separadores do nome ao gerar TIFFs. Quando um .ps
+    # de mesma forma compacta ainda está disponível, usa a grafia fonte (sem o
+    # sufixo de cores selecionadas) para identificar cliente e descrição.
+    base_nome, _ = restaurar_base_nome_postscript(base_nome, indice_nomes_ps)
 
     clientes = listar_clientes()
     produtos = listar_produtos()
@@ -1237,7 +1432,7 @@ def processar_arquivo_hotfolder(caminho_arquivo, nome_pasta_produto, data_ref=No
     }
 
 
-def escanear_diretorio_hotfolder(diretorio_raiz):
+def escanear_diretorio_hotfolder(diretorio_raiz, indice_nomes_ps=None):
     """
     Escaneia todas as subpastas dentro de diretorio_raiz (ex: \\RIPCTP\Manuela\OutPut ou pasta local).
     Coleta APENAS arquivos .tif, .tiff ou .tff respeitando a data real de cada arquivo.
@@ -1263,6 +1458,7 @@ def escanear_diretorio_hotfolder(diretorio_raiz):
                             arq_path,
                             nome_pasta_produto=item,
                             arquivos_irmaos=arquivos_tiff,
+                            indice_nomes_ps=indice_nomes_ps,
                         )
                         if res:
                             resultados.append(res)
@@ -1279,6 +1475,7 @@ def executar_ciclo_monitoramento():
     limpar_e_corrigir_registros_monitorados()
     cfg = get_config()
     novos = []
+    indice_nomes_ps = obter_indice_nomes_postscript(cfg.get("ps_entrada_path"))
 
     net_path = (cfg.get("hotfolder_network_path") or "").strip()
     local_path = os.path.join(BASE_DIR, "hotfolder_output")
@@ -1287,10 +1484,10 @@ def executar_ciclo_monitoramento():
         os.makedirs(os.path.join(local_path, pasta_padrao), exist_ok=True)
 
     if net_path and os.path.exists(net_path):
-        novos.extend(escanear_diretorio_hotfolder(net_path))
+        novos.extend(escanear_diretorio_hotfolder(net_path, indice_nomes_ps))
 
     if os.path.exists(local_path) and os.path.abspath(local_path) != os.path.abspath(net_path or ""):
-        novos.extend(escanear_diretorio_hotfolder(local_path))
+        novos.extend(escanear_diretorio_hotfolder(local_path, indice_nomes_ps))
 
     return novos
 
