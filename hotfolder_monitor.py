@@ -1472,6 +1472,7 @@ def executar_ciclo_monitoramento():
     Remove registros sem extensão .tif/.tiff/.tff, corrige datas, reagrupa lançamentos antigos
     que estavam separados por cor/sem espaço e executa a varredura nas pastas configuradas.
     """
+    inicio_ciclo = time.perf_counter()
     limpar_e_corrigir_registros_monitorados()
     cfg = get_config()
     novos = []
@@ -1489,6 +1490,9 @@ def executar_ciclo_monitoramento():
     if os.path.exists(local_path) and os.path.abspath(local_path) != os.path.abspath(net_path or ""):
         novos.extend(escanear_diretorio_hotfolder(local_path, indice_nomes_ps))
 
+    duracao_ciclo = time.perf_counter() - inicio_ciclo
+    if duracao_ciclo >= 0.75:
+        print(f"[PERF] Ciclo Hot Folder: {duracao_ciclo:.3f}s; novos={len(novos)}")
     return novos
 
 
@@ -1514,6 +1518,7 @@ class HotFolderWatcherThread(threading.Thread):
                     if chave_diretorio != self._ps_diretorio_configurado:
                         self._ps_estado_estabilidade.clear()
                         self._ps_diretorio_configurado = chave_diretorio
+                    inicio_varredura_ps = time.perf_counter()
                     try:
                         normalizar_nomes_arquivos_ps(
                             ps_path,
@@ -1521,6 +1526,10 @@ class HotFolderWatcherThread(threading.Thread):
                         )
                     except Exception as erro:
                         print(f"[PS] Erro na varredura de {ps_path}: {erro}")
+                    finally:
+                        duracao_varredura_ps = time.perf_counter() - inicio_varredura_ps
+                        if duracao_varredura_ps >= 0.75:
+                            print(f"[PERF] Varredura da origem PS: {duracao_varredura_ps:.3f}s")
                 else:
                     self._ps_estado_estabilidade.clear()
                     self._ps_diretorio_configurado = None

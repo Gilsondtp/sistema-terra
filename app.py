@@ -4,6 +4,7 @@ import sys
 import re
 import json
 import shutil
+import time
 import zipfile
 from datetime import date, datetime, timedelta
 
@@ -26,6 +27,7 @@ from flask import (
     jsonify,
     send_file,
     Response,
+    g,
 )
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -36,10 +38,36 @@ import hotfolder_monitor
 app = Flask(__name__)
 app.secret_key = "sistema_terra_secret_key_sqlite_python"
 
-# Inicializa banco SQLite e inicia thread de monitoramento Hot Folder
+# Inicializa banco SQLite e inicia thread de monitoramento Hot Folder.
+# Registra inicializações demoradas para diferenciar migração/SQLite de varredura de arquivos.
+_inicio_init_db = time.perf_counter()
 database.init_db()
+_duracao_init_db = time.perf_counter() - _inicio_init_db
+if _duracao_init_db >= 0.75:
+    app.logger.warning("[PERF] Inicialização SQLite demorou %.3fs", _duracao_init_db)
 watcher_thread = hotfolder_monitor.HotFolderWatcherThread()
 watcher_thread.start()
+
+
+@app.before_request
+def _marcar_inicio_requisicao():
+    g._terra_inicio_requisicao = time.perf_counter()
+
+
+@app.after_request
+def _registrar_requisicao_lenta(response):
+    inicio = getattr(g, "_terra_inicio_requisicao", None)
+    if inicio is not None:
+        duracao = time.perf_counter() - inicio
+        if duracao >= 0.75:
+            app.logger.warning(
+                "[PERF] %s %s -> %s em %.3fs",
+                request.method,
+                request.path,
+                response.status_code,
+                duracao,
+            )
+    return response
 
 
 # Filtros Jinja2 para formatação brasileira
@@ -140,14 +168,9 @@ def _resumir_arquivos_origem(servico):
 @app.route("/", methods=["GET"])
 @app.route("/lancamento-diario", methods=["GET"])
 def lancamento_diario():
-    # Executa uma leitura rápida do Hot Folder ao abrir a tela
-    novos_detectados = hotfolder_monitor.executar_ciclo_monitoramento()
-    if novos_detectados:
-        flash(
-            f"{len(novos_detectados)} novo(s) arquivo(s) processado(s) automaticamente do Hot Folder!",
-            "info",
-        )
-
+    # A varredura do Hot Folder roda em segundo plano; manter a leitura fora desta
+    # requisição evita atrasar a abertura da lista e os redirecionamentos de edição/exclusão.
+    # O botão "Atualizar Pasta" continua executando uma varredura imediata sob demanda.
     modo_filtro = request.args.get("modo", "diario")
     # Se 'data' foi passado na URL (mesmo vazio), respeita o valor; se não foi passado, assume a data de hoje no modo diário
     if "data" in request.args:

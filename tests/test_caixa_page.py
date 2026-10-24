@@ -228,9 +228,10 @@ class CaixaPageTests(unittest.TestCase):
 
     def test_daily_page_auto_refreshes_and_shows_processing_feedback(self):
         client = self.app_module.app.test_client()
-        with patch.object(hotfolder_monitor, "executar_ciclo_monitoramento", return_value=[]):
+        with patch.object(hotfolder_monitor, "executar_ciclo_monitoramento") as scanner:
             response = client.get("/lancamento-diario")
         self.assertEqual(response.status_code, 200)
+        scanner.assert_not_called()
         html = response.get_data(as_text=True)
         self.assertIn("Lista atualizada automaticamente", html)
         self.assertIn("/hotfolder/status", html)
@@ -240,6 +241,17 @@ class CaixaPageTests(unittest.TestCase):
         self.assertNotIn("Fechamento do Mês / Virada de Mês", html)
         self.assertNotIn("Transfere saldos para a Fatura Anterior", html)
         self.assertIn("Abrir Fechamento Mensal", html)
+
+    def test_manual_hotfolder_scan_still_runs_on_demand(self):
+        client = self.app_module.app.test_client()
+        with patch.object(hotfolder_monitor, "executar_ciclo_monitoramento", return_value=[]) as scanner:
+            response = client.post(
+                "/hotfolder/escanear",
+                data={"redirect_to": "/lancamento-diario?data=2026-10-23"},
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/lancamento-diario?data=2026-10-23")
+        scanner.assert_called_once_with()
 
     def test_hotfolder_status_endpoint_reports_watcher_activity(self):
         client = self.app_module.app.test_client()
