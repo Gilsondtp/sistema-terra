@@ -1347,6 +1347,7 @@ def download_projeto_zip():
     """Gera o pacote de atualização sem banco de dados ou arquivos PHP legados."""
     mem_zip = io.BytesIO()
     arquivos_incluir = [
+        ".gitattributes",
         ".gitignore",
         "README_PYTHON.md",
         "app.py",

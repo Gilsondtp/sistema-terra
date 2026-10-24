@@ -85,6 +85,13 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("attachment;", response.headers.get("Content-Disposition", ""))
         with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
             nomes = archive.namelist()
+            batch_zip = archive.read("sistema-terra/iniciar_sistema.bat")
+            stop_batch_zip = archive.read("sistema-terra/parar_sistema.bat")
+            vbs_zip = archive.read("sistema-terra/iniciar_sem_janela.vbs")
+        self.assertIn("sistema-terra/.gitattributes", nomes)
+        self.assertEqual(batch_zip.count(b"\n"), batch_zip.count(b"\r\n"))
+        self.assertEqual(stop_batch_zip.count(b"\n"), stop_batch_zip.count(b"\r\n"))
+        self.assertEqual(vbs_zip.count(b"\n"), vbs_zip.count(b"\r\n"))
         self.assertIn("sistema-terra/templates/faturas.html", nomes)
         self.assertIn("sistema-terra/templates/fatura_detalhe.html", nomes)
         self.assertIn("sistema-terra/iniciar_sistema.bat", nomes)
@@ -110,6 +117,8 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("pythonw", vbscript)
         self.assertIn("wait_for_server.py", vbscript)
         self.assertIn("healthz", vbscript)
+        self.assertIn("import flask, watchdog, openpyxl", vbscript)
+        self.assertIn("iniciar_sistema.bat", vbscript)
         self.assertIn("python ausente", vbscript)
 
     def test_health_endpoint_identifies_the_running_application(self):
