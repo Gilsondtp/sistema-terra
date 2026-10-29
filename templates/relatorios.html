@@ -185,7 +185,9 @@
                         <th style="width: 120px;" class="text-end">Valor</th>
                         <th style="width: 120px;" class="text-end">Entreg.</th>
                         <th style="width: 120px;" class="text-end">Pgtº</th>
-                        <th style="width: 135px;" class="text-center no-print">Ações</th>
+                        {% if pode_editar_lancamentos %}
+                            <th style="width: 135px;" class="text-center no-print">Ações</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -204,8 +206,8 @@
                                         <td class="text-end">R$ 0,00</td>
                                         <td class="text-end">R$ {{ l.valor_entrega | moeda }}</td>
                                         <td class="text-end">R$ {{ l.valor_pagamento | moeda }}</td>
-                                        <td class="text-center no-print">
-                                            {% if pode_editar_lancamentos %}
+                                        {% if pode_editar_lancamentos %}
+                                            <td class="text-center no-print">
                                                 <div class="d-flex justify-content-center gap-1">
                                                     <button type="button" class="btn btn-sm btn-warning" onclick="abrirModalEditarLancamentoPorId({{ l.id }})" title="Editar lançamento">
                                                         <i class="fas fa-edit"></i><span class="d-none d-lg-inline ms-1">Editar</span>
@@ -214,8 +216,8 @@
                                                         <i class="fas fa-trash"></i>
                                                     </button>
                                                 </div>
-                                            {% endif %}
-                                        </td>
+                                            </td>
+                                        {% endif %}
                                     </tr>
                                 {% else %}
                                     {% for s in l.servicos %}
@@ -229,8 +231,8 @@
                                             <td class="text-end">R$ {{ s.valor | moeda }}</td>
                                             <td class="text-end">{% if loop.first %}R$ {{ l.valor_entrega | moeda }}{% endif %}</td>
                                             <td class="text-end">{% if loop.first %}R$ {{ l.valor_pagamento | moeda }}{% endif %}</td>
-                                            <td class="text-center no-print">
-                                                {% if pode_editar_lancamentos %}
+                                            {% if pode_editar_lancamentos %}
+                                                <td class="text-center no-print">
                                                     <div class="d-flex justify-content-center gap-1">
                                                         <button type="button" class="btn btn-sm btn-warning" onclick="abrirModalEditarLancamentoPorId({{ l.id }})" title="Editar lançamento">
                                                             <i class="fas fa-edit"></i><span class="d-none d-lg-inline ms-1">Editar</span>
@@ -239,8 +241,8 @@
                                                             <i class="fas fa-trash"></i>
                                                         </button>
                                                     </div>
-                                                {% endif %}
-                                            </td>
+                                                </td>
+                                            {% endif %}
                                         </tr>
                                     {% endfor %}
                                 {% endif %}
@@ -248,7 +250,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="9" class="text-center text-muted py-3">
+                            <td colspan="{{ 9 if pode_editar_lancamentos else 8 }}" class="text-center text-muted py-3">
                                 Nenhum lançamento no período selecionado para este cliente.
                             </td>
                         </tr>
@@ -262,7 +264,9 @@
                         <th class="text-end">R$ {{ totais.servicos | moeda }}</th>
                         <th class="text-end">R$ {{ totais.entrega | moeda }}</th>
                         <th class="text-end">R$ {{ totais.pagamento | moeda }}</th>
-                        <th class="no-print"></th>
+                        {% if pode_editar_lancamentos %}
+                            <th class="no-print"></th>
+                        {% endif %}
                     </tr>
                 </tfoot>
             </table>

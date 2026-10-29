@@ -193,6 +193,7 @@ class CaixaPageTests(unittest.TestCase):
         self.assertNotIn("Arquivar fatura do mês", html)
         self.assertNotIn("abrirModalNovoLancamento(", html)
         self.assertNotIn("abrirModalEditarLancamento", html)
+        self.assertNotIn("Ações</th>", html)
         self.assertIn("R$ 110,00", html)  # Serviços + entrega
         self.assertIn("R$ 25,00", html)   # Pagamento do período + fatura anterior
         self.assertIn("R$ 5,00", html)    # Pagamento antigo fica identificado à parte
@@ -329,6 +330,7 @@ class CaixaPageTests(unittest.TestCase):
         self.assertNotIn("abrirModalNovoLancamento(", html)
         self.assertNotIn("abrirModalEditarLancamento(", html)
         self.assertNotIn("confirmarExclusaoLancamentoRelatorio(", html)
+        self.assertNotIn("Ações</th>", html)
         self.assertNotIn('id="modalLancamento"', html)
 
     def test_legacy_launch_screen_redirects_to_the_report(self):
