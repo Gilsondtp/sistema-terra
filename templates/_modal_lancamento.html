@@ -2,11 +2,11 @@
 <div class="modal fade" id="modalLancamento" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
-            <form id="formModalLancamento" method="POST" action="{{ url_for('salvar_lancamento') }}" data-processing-message="Salvando o lançamento...">
+            <form id="formModalLancamento" method="POST" action="{{ url_for('salvar_lancamento') }}" data-report-url="{{ url_for('relatorios_page') }}" data-processing-message="Salvando o lançamento...">
                 <input type="hidden" name="acao" id="modal_lanc_acao" value="criar">
                 <input type="hidden" name="id" id="modal_lanc_id" value="">
                 <input type="hidden" name="cliente_nome_original" id="modal_lanc_cli_orig" value="">
-                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+                <input type="hidden" name="redirect_to" id="modal_redirect_to" value="{{ request.full_path }}">
 
                 <div class="modal-header bg-primary text-white">
                     <h5 class="modal-title fw-bold" id="modalLancamentoTitulo">
@@ -18,8 +18,8 @@
                 <div class="modal-body">
                     <div class="row g-3 mb-3">
                         <div class="col-md-7">
-                            <label class="form-label fw-semibold">Cliente Cadastrado</label>
-                            <select class="form-select" id="modal_cliente_id" name="cliente_id" onchange="aoSelecionarClienteModal()">
+                            <label class="form-label fw-semibold">Cliente</label>
+                            <select class="form-select" id="modal_cliente_id" name="cliente_id" required onchange="aoSelecionarClienteModal()">
                                 <option value="">-- Não Identificado / Selecionar Cliente --</option>
                                 {% for c in clientes %}
                                     <option value="{{ c.id }}" data-fatura="{{ c.fatura_anterior or 0 }}">{{ c.nome }}</option>
@@ -32,7 +32,7 @@
                         </div>
                         <div class="col-md-5">
                             <label class="form-label fw-semibold">Data do Lançamento</label>
-                            <input type="date" class="form-control" id="modal_data_lancamento" name="data_lancamento" value="{{ hoje_iso }}" required>
+                            <input type="date" class="form-control" id="modal_data_lancamento" name="data_lancamento" value="{{ data_padrao_lancamento | default(hoje_iso) }}" data-default-date="{{ data_padrao_lancamento | default(hoje_iso) }}" required>
                         </div>
                     </div>
 
@@ -100,10 +100,17 @@
                         <label class="form-label fw-semibold">Observação</label>
                         <input type="text" class="form-control" id="modal_observacao" name="observacao" placeholder="Digite uma observação opcional para este lançamento">
                     </div>
+                    {% if fatura_reaberta %}
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Motivo da correção (opcional)</label>
+                        <input type="text" class="form-control" id="modal_motivo_correcao" name="motivo_correcao" maxlength="500" placeholder="A alteração será registrada na auditoria mesmo sem motivo">
+                    </div>
+                    {% endif %}
                 </div>
 
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick='abrirModalNovoLancamento({{ cliente_id|tojson }})'>Novo</button>
                     <button type="submit" class="btn btn-primary px-4">
                         <i class="fas fa-save me-1"></i> Salvar Lançamento
                     </button>
@@ -221,27 +228,38 @@
         }
     }
 
-    function abrirModalNovoLancamento() {
-        document.getElementById('formModalLancamento').reset();
+    function abrirModalNovoLancamento(clienteId = '') {
+        const form = document.getElementById('formModalLancamento');
+        form.reset();
         document.getElementById('modal_lanc_acao').value = 'criar';
         document.getElementById('modal_lanc_id').value = '';
         document.getElementById('modal_lanc_cli_orig').value = '';
         document.getElementById('modalLancamentoTitulo').innerHTML = '<i class="fas fa-plus-circle me-2"></i> Novo Lançamento';
-        document.getElementById('modal_data_lancamento').value = '{{ hoje_iso }}';
+
+        const campoData = document.getElementById('modal_data_lancamento');
+        campoData.value = campoData.dataset.defaultDate || '{{ hoje_iso }}';
         document.getElementById('modal_valor_entrega').value = '0,00';
         document.getElementById('modal_valor_pagamento').value = '0,00';
         document.getElementById('modal_fatura_anterior').value = '0,00';
         document.getElementById('modal_pagamento_fatura_anterior').value = '0,00';
         document.getElementById('modal_saldo_fatura_anterior').value = '0,00';
         document.getElementById('modal_observacao').value = '';
+        const motivoCorrecao = document.getElementById('modal_motivo_correcao');
+        if (motivoCorrecao) motivoCorrecao.value = '';
         document.getElementById('aviso_nao_identificado').classList.add('d-none');
+
+        const cliente = document.getElementById('modal_cliente_id');
+        if (clienteId && cliente) {
+            cliente.value = String(clienteId);
+            aoSelecionarClienteModal();
+        }
 
         const container = document.getElementById('modal_servicos_container');
         container.innerHTML = '';
         contadorServicosModal = 0;
         adicionarLinhaServicoModal();
 
-        new bootstrap.Modal(document.getElementById('modalLancamento')).show();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalLancamento')).show();
     }
 
     function abrirModalEditarLancamento(lancamento) {
@@ -265,6 +283,8 @@
         document.getElementById('modal_pagamento_fatura_anterior').value = formatarMoedaBR(lancamento.pagamento_fatura_anterior || 0);
         document.getElementById('modal_saldo_fatura_anterior').value = formatarMoedaBR(lancamento.saldo_fatura_anterior || 0);
         document.getElementById('modal_observacao').value = lancamento.observacao || '';
+        const motivoCorrecao = document.getElementById('modal_motivo_correcao');
+        if (motivoCorrecao) motivoCorrecao.value = '';
 
         const container = document.getElementById('modal_servicos_container');
         container.innerHTML = '';
@@ -275,6 +295,25 @@
             adicionarLinhaServicoModal();
         }
 
-        new bootstrap.Modal(document.getElementById('modalLancamento')).show();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalLancamento')).show();
     }
+
+    function atualizarDestinoRelatorioLancamento() {
+        const form = document.getElementById('formModalLancamento');
+        const clienteId = document.getElementById('modal_cliente_id').value;
+        const dataLancamento = document.getElementById('modal_data_lancamento').value;
+        const destino = document.getElementById('modal_redirect_to');
+        if (!form || !clienteId || !/^\d{4}-\d{2}-\d{2}$/.test(dataLancamento) || !destino) return;
+
+        const parametros = new URLSearchParams({
+            cliente_id: clienteId,
+            tipo_periodo: 'mensal',
+            periodo: dataLancamento.slice(0, 7)
+        });
+        destino.value = `${form.dataset.reportUrl}?${parametros.toString()}`;
+    }
+
+    document.getElementById('formModalLancamento').addEventListener(
+        'submit', atualizarDestinoRelatorioLancamento
+    );
 </script>

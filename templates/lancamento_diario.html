@@ -49,9 +49,6 @@
             {% endif %}
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-primary btn-sm px-3 fw-semibold" onclick="abrirModalNovoLancamento()">
-                <i class="fas fa-plus me-1"></i> Criar Lançamento
-            </button>
             <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
                 <i class="fas fa-vial me-1"></i> Testar / Simular Hot Folder
             </button>
@@ -153,7 +150,6 @@
                         <th style="width: 130px;" class="text-center">Produto (Chapa)</th>
                         <th style="width: 110px;" class="text-end">Quant. Produto</th>
                         <th style="width: 130px;" class="text-end">Valor (R$)</th>
-                        <th style="width: 170px;" class="text-center no-print">Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -219,38 +215,16 @@
                                 <td class="text-center fw-semibold">{{ item.produto_nome }}</td>
                                 <td class="text-end fw-bold">{{ item.quantidade }}</td>
                                 <td class="text-end fw-bold">R$ {{ item.valor | moeda }}</td>
-                                <td class="text-center no-print">
-                                    {% if item.lancamento_obj.fatura_id and item.lancamento_obj.fatura_status != 'reaberta' %}
-                                        <span class="badge text-bg-success">Arquivado {{ item.lancamento_obj.fatura_periodo }}</span>
-                                    {% else %}
-                                        {% if item.lancamento_obj.fatura_status == 'reaberta' %}
-                                            <span class="badge text-bg-warning mb-1">Revisão aberta</span><br>
-                                        {% endif %}
-                                        <button type="button" class="btn btn-sm btn-warning"
-                                                onclick='abrirModalEditarLancamento({{ item.lancamento_obj | tojson }})'
-                                                title="Editar Lançamento">
-                                            <i class="fas fa-edit"></i> Editar
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-danger"
-                                                onclick="confirmarExclusaoLancamento({{ item.lancamento_id }}, {{ item.servico_id or 0 }})"
-                                                title="Apagar Registro">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    {% endif %}
-                                </td>
                             </tr>
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="8" class="text-center py-4 text-muted">
+                            <td colspan="7" class="text-center py-4 text-muted">
                                 <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
                                 Nenhum serviço encontrado para o filtro selecionado.
                                 <div class="mt-2 no-print">
                                     <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalSimuladorHotFolder">
                                         <i class="fas fa-vial me-1"></i> Simular entrada de arquivos no Hot Folder
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-primary ms-1" onclick="abrirModalNovoLancamento()">
-                                        <i class="fas fa-plus me-1"></i> Criar Lançamento Manual
                                     </button>
                                 </div>
                             </td>
@@ -263,7 +237,6 @@
                         <td colspan="5" class="text-end fs-6">SOMA DA LISTAGEM EXIBIDA:</td>
                         <td class="text-end fs-6 text-primary">{{ soma_quantidade_produtos }}</td>
                         <td class="text-end fs-6 text-primary">R$ {{ soma_valores | moeda }}</td>
-                        <td class="no-print"></td>
                     </tr>
                 </tfoot>
             </table>
@@ -301,30 +274,6 @@
         <button type="button" class="btn btn-sm btn-outline-dark no-print" onclick="window.print()">
             <i class="fas fa-print me-1"></i> Imprimir
         </button>
-    </div>
-</div>
-
-<!-- Modal de Exclusão -->
-<div class="modal fade" id="modalExcluirLancamento" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form method="POST" action="{{ url_for('excluir_lancamento_route') }}" data-processing-message="Excluindo lançamento e atualizando o estoque...">
-                <input type="hidden" name="id" id="input_excluir_lanc_id">
-                <input type="hidden" name="servico_id" id="input_excluir_serv_id">
-                <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
-                <div class="modal-header">
-                    <h5 class="modal-title fw-bold">Confirmar Exclusão</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    Tem certeza que deseja apagar este registro? O estoque das chapas associadas será estornado automaticamente e o arquivo não será reimportado pelo Hot Folder.
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="submit" class="btn btn-danger">Apagar</button>
-                </div>
-            </form>
-        </div>
     </div>
 </div>
 
@@ -444,20 +393,10 @@ gilson cartaz k</textarea>
     </div>
 </div>
 
-{% include "_modal_lancamento.html" %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-    function confirmarExclusaoLancamento(id, servicoId) {
-        document.getElementById('input_excluir_lanc_id').value = id;
-        const inpServ = document.getElementById('input_excluir_serv_id');
-        if (inpServ) {
-            inpServ.value = servicoId || '';
-        }
-        new bootstrap.Modal(document.getElementById('modalExcluirLancamento')).show();
-    }
-
     function preencherExemploSimulador(texto) {
         document.getElementById('textarea_simulador').value = texto;
     }

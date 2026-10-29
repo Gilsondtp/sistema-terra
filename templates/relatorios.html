@@ -79,6 +79,13 @@
                     <label class="form-label fw-semibold">Período mensal</label>
                     <input type="month" class="form-control" name="periodo" id="periodo_relatorio" value="{{ periodo }}" {% if tipo_periodo != 'mensal' %}disabled{% else %}required{% endif %}>
                 </div>
+                {% if pode_editar_lancamentos %}
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-primary w-100" onclick='abrirModalNovoLancamento({{ cliente_id|tojson }})'>
+                        <i class="fas fa-plus me-1"></i> Novo lançamento
+                    </button>
+                </div>
+                {% endif %}
                 <div class="col-md-4 {% if tipo_periodo != 'intervalo' %}d-none{% endif %}" id="camposIntervaloDatas">
                     <div class="row g-2">
                         <div class="col-6">
@@ -178,6 +185,7 @@
                         <th style="width: 120px;" class="text-end">Valor</th>
                         <th style="width: 120px;" class="text-end">Entreg.</th>
                         <th style="width: 120px;" class="text-end">Pgtº</th>
+                        <th style="width: 135px;" class="text-center no-print">Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -196,6 +204,18 @@
                                         <td class="text-end">R$ 0,00</td>
                                         <td class="text-end">R$ {{ l.valor_entrega | moeda }}</td>
                                         <td class="text-end">R$ {{ l.valor_pagamento | moeda }}</td>
+                                        <td class="text-center no-print">
+                                            {% if pode_editar_lancamentos %}
+                                                <div class="d-flex justify-content-center gap-1">
+                                                    <button type="button" class="btn btn-sm btn-warning" onclick="abrirModalEditarLancamentoPorId({{ l.id }})" title="Editar lançamento">
+                                                        <i class="fas fa-edit"></i><span class="d-none d-lg-inline ms-1">Editar</span>
+                                                    </button>
+                                                    <button type="button" class="btn btn-sm btn-danger" onclick="confirmarExclusaoLancamentoRelatorio({{ l.id }}, 0)" title="Excluir lançamento">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                 {% else %}
                                     {% for s in l.servicos %}
@@ -209,6 +229,18 @@
                                             <td class="text-end">R$ {{ s.valor | moeda }}</td>
                                             <td class="text-end">{% if loop.first %}R$ {{ l.valor_entrega | moeda }}{% endif %}</td>
                                             <td class="text-end">{% if loop.first %}R$ {{ l.valor_pagamento | moeda }}{% endif %}</td>
+                                            <td class="text-center no-print">
+                                                {% if pode_editar_lancamentos %}
+                                                    <div class="d-flex justify-content-center gap-1">
+                                                        <button type="button" class="btn btn-sm btn-warning" onclick="abrirModalEditarLancamentoPorId({{ l.id }})" title="Editar lançamento">
+                                                            <i class="fas fa-edit"></i><span class="d-none d-lg-inline ms-1">Editar</span>
+                                                        </button>
+                                                        <button type="button" class="btn btn-sm btn-danger" onclick="confirmarExclusaoLancamentoRelatorio({{ l.id }}, {{ s.id }})" title="Excluir serviço">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                {% endif %}
+                                            </td>
                                         </tr>
                                     {% endfor %}
                                 {% endif %}
@@ -216,7 +248,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="8" class="text-center text-muted py-3">
+                            <td colspan="9" class="text-center text-muted py-3">
                                 Nenhum lançamento no período selecionado para este cliente.
                             </td>
                         </tr>
@@ -230,6 +262,7 @@
                         <th class="text-end">R$ {{ totais.servicos | moeda }}</th>
                         <th class="text-end">R$ {{ totais.entrega | moeda }}</th>
                         <th class="text-end">R$ {{ totais.pagamento | moeda }}</th>
+                        <th class="no-print"></th>
                     </tr>
                 </tfoot>
             </table>
@@ -376,12 +409,56 @@
             {% endif %}
         </div>
     </div>
+
+    {% if pode_editar_lancamentos %}
+        {% include "_modal_lancamento.html" %}
+
+        <div class="modal fade no-print" id="modalExcluirLancamentoRelatorio" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form method="POST" action="{{ url_for('excluir_lancamento_route') }}" data-processing-message="Excluindo lançamento e atualizando o estoque...">
+                        <input type="hidden" name="id" id="relatorio_excluir_lanc_id">
+                        <input type="hidden" name="servico_id" id="relatorio_excluir_serv_id">
+                        <input type="hidden" name="redirect_to" value="{{ request.full_path }}">
+                        <div class="modal-header">
+                            <h5 class="modal-title fw-bold">Confirmar exclusão</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                        </div>
+                        <div class="modal-body">
+                            Tem certeza que deseja excluir este serviço/lançamento? O estoque associado será estornado automaticamente.
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="submit" class="btn btn-danger">Excluir</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% endif %}
     {% endif %}
 {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
+    {% if pode_editar_lancamentos %}
+    const LANCAMENTOS_RELATORIO = {{ lancamentos | tojson }};
+
+    function abrirModalEditarLancamentoPorId(id) {
+        const lancamento = LANCAMENTOS_RELATORIO.find(item => String(item.id) === String(id));
+        if (lancamento) abrirModalEditarLancamento(lancamento);
+    }
+
+    function confirmarExclusaoLancamentoRelatorio(id, servicoId) {
+        document.getElementById('relatorio_excluir_lanc_id').value = id;
+        document.getElementById('relatorio_excluir_serv_id').value = servicoId || '';
+        bootstrap.Modal.getOrCreateInstance(
+            document.getElementById('modalExcluirLancamentoRelatorio')
+        ).show();
+    }
+    {% endif %}
+
     function alternarFiltroPeriodoRelatorio() {
         const tipo = document.getElementById('tipo_periodo_relatorio');
         if (!tipo) return;
@@ -404,7 +481,9 @@
     document.addEventListener('DOMContentLoaded', function () {
         alternarFiltroPeriodoRelatorio();
         const relatorio = document.getElementById('relatorio-gerado');
-        if (relatorio && relatorio.dataset.gerado === '1') {
+        const podeEditarLancamentos = {{ 'true' if pode_editar_lancamentos else 'false' }};
+        // Mantém o botão Novo lançamento e os filtros à vista nas faturas abertas.
+        if (relatorio && relatorio.dataset.gerado === '1' && !podeEditarLancamentos) {
             relatorio.scrollIntoView({ behavior: 'smooth', block: 'start' });
             relatorio.focus({ preventScroll: true });
         }

@@ -6,9 +6,9 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 
 1. **Primeira Tela — `LANC. DIÁRIO` (`/lancamento-diario` ou `/`)**:
    - Exibe a listagem dos serviços monitorados automaticamente pelo Hot Folder e lançados no dia (ou outra data selecionada).
-   - **Barra Superior**: Seletor de modo de exibição (*Lançamento Diário (Padrão)*, *Por Cliente*, *Por Produto*, *Por Descrição do Serviço*, *Apenas Não Identificados*), filtro por data/cliente/produto/texto, botão **Criar Lançamento** (abre o modal completo), **Fechamento do Mês / Virada de Mês**, botão **Testar / Simular Hot Folder**, **Atualizar Pasta** e **Imprimir Listagem**.
+   - **Barra Superior**: Seletor de modo de exibição (*Lançamento Diário (Padrão)*, *Por Cliente*, *Por Produto*, *Por Descrição do Serviço*, *Apenas Não Identificados*), filtros por data/cliente/produto/texto, **Fechamento do Mês / Virada de Mês**, botão **Testar / Simular Hot Folder**, **Atualizar Pasta** e **Imprimir Listagem**. Esta tela acompanha os lançamentos automáticos e não oferece edição/exclusão.
    - O fechamento mensal atualiza saldos de clientes e organiza os lançamentos de serviço, mas **preserva o histórico financeiro da tela Caixa** (receitas, despesas, recebimentos e pagamentos).
-   - **Destaque em Vermelho para Não Identificados**: Serviços cujo cliente não pôde ser identificado pelo nome do arquivo aparecem destacados em **vermelho** com a opção de **Atribuir Cliente** diretamente na linha ou pelo botão Editar.
+   - **Destaque em Vermelho para Não Identificados**: Serviços cujo cliente não pôde ser identificado pelo nome do arquivo aparecem destacados em **vermelho**, com opção para **Atribuir Cliente** diretamente na linha.
    - **Soma nas Colunas**: Rodapé da tabela com a soma total da **Quantidade de Produto (Chapas)** e a soma de **Valores (R$)** da listagem exibida.
    - **Barra Inferior**: Exibe a quantidade total de serviços, a quantidade de **Não Identificados** e o total de chapas/valores.
 
@@ -24,10 +24,10 @@ Aplicação recriada em **Python (Flask + SQLite)** preservando todas as funçõ
 4. **Terceira Alteração — `CAIXA` (`/caixa`)**:
    - Incorporada ao mesmo banco de dados SQLite (`sistema_terra.db`), exibindo lado a lado os **Saldos Devedores dos Clientes e Pagamentos Lançados** e o fluxo de movimentações do Caixa (Receitas, Despesas, Recebidos, Pagos, A Receber, Transferidos).
 
-5. **Telas Preservadas Integralmente**:
-   - **Lançamentos (`/lancamentos`)**: Formulário completo com múltiplos serviços, entrega, pagamento/desconto, fatura anterior, pagtº fatura anterior, saldo da fatura anterior, observação e área de registros com filtros.
+5. **Relatório e manutenção de lançamentos**:
+   - **Relatório / Fatura Individual (`/relatorios`)**: Emissão de fatura formatada para impressão, relatório de produtos utilizados no período e consulta por intervalo. Na fatura mensal aberta, o botão **Novo lançamento** abre o formulário em pop-up; os botões de edição e exclusão ficam junto a cada item e somem na impressão. O fechamento mensal arquiva os lançamentos sem apagá-los nem alterar Caixa/estoque. Faturas fechadas continuam bloqueadas para alteração; é preciso reabri-las pelo histórico, com auditoria, antes de corrigir.
+   - **Formulário de lançamento**: integrado ao relatório em um pop-up, com múltiplos serviços, entrega, pagamento/desconto, fatura anterior e observação. A antiga URL `/lancamentos` redireciona para o relatório.
    - **Clientes (`/clientes`)**: Cadastro, busca, edição e exclusão protegida, com campo opcional de CNPJ formatado.
-   - **Relatório / Fatura Individual (`/relatorios`)**: Emissão de fatura formatada para impressão, relatório de produtos utilizados no período e botão **Fechar Fatura** (transfere o saldo devedor para `fatura_anterior` do cliente e limpa os lançamentos do período sem devolver o estoque consumido).
    - **Demonstrativo (`/demonstrativo`)**: Resumo geral de todos os clientes por período ou produto, produtos utilizados, alerta de estoque crítico, impressão e **Exportação para Excel (`.xlsx`)**.
    - **Backup Fácil (`/configuracoes`)**: Exportação e importação em 1 clique do banco SQLite (`.db`), `.json` ou `.sql`.
 

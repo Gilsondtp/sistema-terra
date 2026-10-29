@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from datetime import date
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 import database
@@ -190,6 +191,8 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("RELATÓRIO DE LANÇAMENTOS", html)
         self.assertIn("Esta consulta não altera nem fecha faturas mensais", html)
         self.assertNotIn("Arquivar fatura do mês", html)
+        self.assertNotIn("abrirModalNovoLancamento(", html)
+        self.assertNotIn("abrirModalEditarLancamento", html)
         self.assertIn("R$ 110,00", html)  # Serviços + entrega
         self.assertIn("R$ 25,00", html)   # Pagamento do período + fatura anterior
         self.assertIn("R$ 5,00", html)    # Pagamento antigo fica identificado à parte
@@ -226,6 +229,125 @@ class CaixaPageTests(unittest.TestCase):
             }
         )
 
+    def _lancamento_teste_relatorio(self, fatura_id=None, fatura_status=None):
+        return {
+            "id": 501,
+            "cliente_id": 1,
+            "cliente_nome": "Cliente Teste",
+            "cliente_nome_original": "",
+            "identificado": 1,
+            "origem": "manual",
+            "data_lancamento": "2026-10-06",
+            "valor_entrega": 10.0,
+            "valor_pagamento": 20.0,
+            "fatura_anterior": 0.0,
+            "pagamento_fatura_anterior": 0.0,
+            "saldo_fatura_anterior": 0.0,
+            "fatura_id": fatura_id,
+            "fatura_periodo": "2026-10" if fatura_id else None,
+            "fatura_status": fatura_status,
+            "observacao": "Observação de teste",
+            "servicos": [
+                {
+                    "id": 901,
+                    "descricao": "Serviço de teste",
+                    "quantidade": 2,
+                    "produto_id": 3,
+                    "produto_nome": "Chapa teste",
+                    "valor": 100.0,
+                }
+            ],
+        }
+
+    def test_open_monthly_report_embeds_new_and_edit_launch_actions(self):
+        client = self.app_module.app.test_client()
+        cliente = {"id": 1, "nome": "Cliente Teste", "fatura_anterior": 0.0}
+        lancamento = self._lancamento_teste_relatorio()
+        with patch.object(database, "listar_clientes", return_value=[cliente]), \
+             patch.object(database, "buscar_cliente", return_value=cliente), \
+             patch.object(database, "obter_fatura_periodo", return_value=None), \
+             patch.object(database, "listar_lancamentos", return_value=[lancamento]), \
+             patch.object(database, "obter_saldo_abertura_fatura", return_value=0.0), \
+             patch.object(database, "limites_periodo_fatura", return_value=("2026-10-01", "2026-10-31")), \
+             patch.object(database, "listar_produtos", return_value=[]):
+            response = client.get(
+                "/relatorios",
+                query_string={"cliente_id": "1", "tipo_periodo": "mensal", "periodo": "2026-10"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Novo lançamento", html)
+        self.assertIn("abrirModalNovoLancamento(", html)
+        self.assertIn("Ações</th>", html)
+        self.assertIn("abrirModalEditarLancamento(", html)
+        self.assertIn("confirmarExclusaoLancamentoRelatorio(501, 901)", html)
+        self.assertIn('id="modalLancamento"', html)
+        self.assertIn('id="modalExcluirLancamentoRelatorio"', html)
+        self.assertIn('class="text-center no-print"', html)
+        self.assertNotIn("/lancamentos", html)
+
+    def test_reopened_report_allows_edits_and_keeps_correction_reason_optional(self):
+        client = self.app_module.app.test_client()
+        cliente = {"id": 1, "nome": "Cliente Teste", "fatura_anterior": 0.0}
+        fatura = {"id": 82, "status": "reaberta", "saldo_abertura": 0.0}
+        lancamento = self._lancamento_teste_relatorio(82, "reaberta")
+        with patch.object(database, "listar_clientes", return_value=[cliente]), \
+             patch.object(database, "buscar_cliente", return_value=cliente), \
+             patch.object(database, "obter_fatura_periodo", return_value=fatura), \
+             patch.object(database, "listar_lancamentos", return_value=[lancamento]), \
+             patch.object(database, "listar_produtos", return_value=[]):
+            response = client.get(
+                "/relatorios",
+                query_string={"cliente_id": "1", "tipo_periodo": "mensal", "periodo": "2026-10"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("abrirModalEditarLancamento(", html)
+        self.assertIn('id="modal_motivo_correcao"', html)
+        self.assertIn("A alteração será registrada na auditoria mesmo sem motivo", html)
+        self.assertNotIn('name="motivo_correcao" required', html)
+
+    def test_closed_report_hides_mutation_controls(self):
+        client = self.app_module.app.test_client()
+        cliente = {"id": 1, "nome": "Cliente Teste", "fatura_anterior": 0.0}
+        fatura = {"id": 83, "status": "fechada", "saldo_abertura": 0.0}
+        lancamento = self._lancamento_teste_relatorio(83, "fechada")
+        with patch.object(database, "listar_clientes", return_value=[cliente]), \
+             patch.object(database, "buscar_cliente", return_value=cliente), \
+             patch.object(database, "obter_fatura_periodo", return_value=fatura), \
+             patch.object(database, "listar_lancamentos", return_value=[lancamento]), \
+             patch.object(database, "listar_produtos", return_value=[]):
+            response = client.get(
+                "/relatorios",
+                query_string={"cliente_id": "1", "tipo_periodo": "mensal", "periodo": "2026-10"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertNotIn("abrirModalNovoLancamento(", html)
+        self.assertNotIn("abrirModalEditarLancamento(", html)
+        self.assertNotIn("confirmarExclusaoLancamentoRelatorio(", html)
+        self.assertNotIn('id="modalLancamento"', html)
+
+    def test_legacy_launch_screen_redirects_to_the_report(self):
+        response = self.app_module.app.test_client().get(
+            "/lancamentos?cliente_id=1&data_inicio=2026-09-01&data_fim=2026-09-30"
+        )
+        self.assertEqual(response.status_code, 302)
+        parsed = urlparse(response.headers["Location"])
+        self.assertEqual(parsed.path, "/relatorios")
+        self.assertEqual(
+            parse_qs(parsed.query),
+            {
+                "cliente_id": ["1"],
+                "tipo_periodo": ["intervalo"],
+                "data_inicio": ["2026-09-01"],
+                "data_fim": ["2026-09-30"],
+            },
+        )
+
     def test_daily_page_auto_refreshes_and_shows_processing_feedback(self):
         client = self.app_module.app.test_client()
         with patch.object(hotfolder_monitor, "executar_ciclo_monitoramento") as scanner:
@@ -241,6 +363,10 @@ class CaixaPageTests(unittest.TestCase):
         self.assertNotIn("Fechamento do Mês / Virada de Mês", html)
         self.assertNotIn("Transfere saldos para a Fatura Anterior", html)
         self.assertIn("Abrir Fechamento Mensal", html)
+        self.assertNotIn("abrirModalEditarLancamento", html)
+        self.assertNotIn("confirmarExclusaoLancamento", html)
+        self.assertNotIn("modalLancamento", html)
+        self.assertNotIn("Criar Lançamento", html)
 
     def test_manual_hotfolder_scan_still_runs_on_demand(self):
         client = self.app_module.app.test_client()

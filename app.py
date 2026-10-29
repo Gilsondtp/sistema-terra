@@ -169,7 +169,7 @@ def _resumir_arquivos_origem(servico):
 @app.route("/lancamento-diario", methods=["GET"])
 def lancamento_diario():
     # A varredura do Hot Folder roda em segundo plano; manter a leitura fora desta
-    # requisição evita atrasar a abertura da lista e os redirecionamentos de edição/exclusão.
+    # requisição evita atrasar a abertura da lista de acompanhamento automático.
     # O botão "Atualizar Pasta" continua executando uma varredura imediata sob demanda.
     modo_filtro = request.args.get("modo", "diario")
     # Se 'data' foi passado na URL (mesmo vazio), respeita o valor; se não foi passado, assume a data de hoje no modo diário
@@ -388,45 +388,32 @@ def atribuir_cliente_route():
 
 
 # ==============================================================================
-# 2. TELA LANÇAMENTOS (COMPLETA ORIGINAL PRESERVADA)
+# 2. COMPATIBILIDADE: A EDIÇÃO AGORA É FEITA NO RELATÓRIO (FATURA)
 # ==============================================================================
 @app.route("/lancamentos", methods=["GET"])
 def lancamentos_page():
-    filtros = {}
-    data_inicio = request.args.get("data_inicio", "")
-    data_fim = request.args.get("data_fim", "")
-    cliente_id = request.args.get("cliente_id", "")
-    produto_id = request.args.get("produto_id", "")
-    texto_servico = request.args.get("texto_servico", "").strip()
+    """Redireciona links antigos para a nova tela integrada de relatório/fatura."""
+    parametros = {}
+    cliente_id = (request.args.get("cliente_id") or "").strip()
+    data_inicio = (request.args.get("data_inicio") or "").strip()
+    data_fim = (request.args.get("data_fim") or "").strip()
+    periodo = (request.args.get("periodo") or "").strip()
 
-    if data_inicio:
-        filtros["data_inicio"] = data_inicio
-    if data_fim:
-        filtros["data_fim"] = data_fim
     if cliente_id:
-        filtros["cliente_id"] = cliente_id
-    if produto_id:
-        filtros["produto_id"] = produto_id
-    if texto_servico:
-        filtros["texto_servico"] = texto_servico
+        parametros["cliente_id"] = cliente_id
+    if data_inicio and data_fim:
+        parametros.update(
+            tipo_periodo="intervalo",
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+        )
+    else:
+        if not periodo and re.fullmatch(r"\d{4}-\d{2}-\d{2}", data_inicio):
+            periodo = data_inicio[:7]
+        if periodo:
+            parametros.update(tipo_periodo="mensal", periodo=periodo)
 
-    filtros["order_by"] = "l.data_lancamento DESC, l.id DESC"
-    lancamentos = database.listar_lancamentos(filtros)
-    clientes = database.listar_clientes()
-    produtos = database.listar_produtos()
-
-    return render_template(
-        "lancamentos.html",
-        active_page="lancamentos",
-        lancamentos=lancamentos,
-        clientes=clientes,
-        produtos=produtos,
-        data_inicio=data_inicio,
-        data_fim=data_fim,
-        cliente_id=str(cliente_id),
-        produto_id=str(produto_id),
-        texto_servico=texto_servico,
-    )
+    return redirect(url_for("relatorios_page", **parametros))
 
 
 # ==============================================================================
@@ -732,6 +719,21 @@ def relatorios_page():
 
     produtos_utilizados_ordenados = sorted(produtos_utilizados.items(), key=lambda x: x[0].lower())
 
+    # Edição/criação é permitida somente na fatura mensal aberta ou reaberta.
+    # Consultas por intervalo e faturas fechadas continuam sendo somente leitura.
+    fatura_reaberta = bool(fatura_atual and fatura_atual.get("status") == "reaberta")
+    pode_editar_lancamentos = bool(
+        cliente_atual
+        and fatura_gerada
+        and tipo_periodo == "mensal"
+        and (not fatura_atual or fatura_reaberta)
+    )
+    produtos_modal = database.listar_produtos() if pode_editar_lancamentos else []
+    data_padrao_lancamento = date.today().isoformat()
+    if tipo_periodo == "mensal" and periodo != date.today().strftime("%Y-%m"):
+        # Ao corrigir um mês anterior, inicie a data dentro do período consultado.
+        data_padrao_lancamento = data_inicio
+
     return render_template(
         "relatorios.html",
         active_page="relatorios",
@@ -751,6 +753,10 @@ def relatorios_page():
         ultima_data=ultima_data,
         fatura_gerada=fatura_gerada,
         fatura_atual=fatura_atual,
+        fatura_reaberta=fatura_reaberta,
+        pode_editar_lancamentos=pode_editar_lancamentos,
+        produtos=produtos_modal,
+        data_padrao_lancamento=data_padrao_lancamento,
     )
 
 # ==============================================================================
@@ -1393,7 +1399,15 @@ def download_projeto_zip():
             fpath = os.path.join(database.BASE_DIR, fname)
             if os.path.isfile(fpath):
                 arcname = os.path.join("sistema-terra", fname).replace(os.sep, "/")
-                zf.write(fpath, arcname=arcname)
+                if os.path.splitext(fname)[1].lower() in {".bat", ".cmd", ".vbs"}:
+                    # Os launchers são distribuídos com finais de linha Windows mesmo
+                    # quando o ZIP é montado em Linux, evitando erros no cmd.exe.
+                    with open(fpath, "rb") as launcher:
+                        conteudo = launcher.read()
+                    conteudo = conteudo.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                    zf.writestr(arcname, conteudo.replace(b"\n", b"\r\n"))
+                else:
+                    zf.write(fpath, arcname=arcname)
 
         for folder in pastas_incluir:
             folder_path = os.path.join(database.BASE_DIR, folder)

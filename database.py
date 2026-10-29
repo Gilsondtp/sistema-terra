@@ -1698,7 +1698,7 @@ def excluir_lancamento(lancamento_id):
 
 def excluir_servico_diario(servico_id, lancamento_id=None):
     """
-    Exclui um serviço específico na tela de Lançamento Diário.
+    Exclui um serviço específico na tela de Relatório (Fatura).
     Se o lançamento possuir apenas esse serviço (ou ficar sem serviços), exclui o lançamento inteiro.
     Se possuir múltiplos serviços, exclui apenas a linha clicada e preserva os demais serviços do lançamento.
     Marca arquivos monitorados correspondentes como ignorados (ignorado=1) para não reimportar do Hot Folder.
