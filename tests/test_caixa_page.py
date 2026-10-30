@@ -286,6 +286,9 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn('id="modalLancamento"', html)
         self.assertIn('id="modalExcluirLancamentoRelatorio"', html)
         self.assertIn('class="text-center no-print"', html)
+        self.assertIn('class="table table-striped table-bordered align-middle table-fatura"', html)
+        self.assertIn("table-fatura thead th:nth-child(3) { width: 34% !important; }", html)
+        self.assertIn("table-layout: fixed !important", html)
         self.assertNotIn("/lancamentos", html)
 
     def test_reopened_report_allows_edits_and_keeps_correction_reason_optional(self):
