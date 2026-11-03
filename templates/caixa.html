@@ -1,6 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Caixa e Financeiro Integrado - {{ site_title }}{% endblock %}
 
+{% block extra_head %}
+<style>
+    @media print {
+        .caixa-tabelas {
+            display: block !important;
+        }
+        .caixa-tabelas > .caixa-painel {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            flex: 0 0 100% !important;
+            margin-bottom: 1rem !important;
+        }
+        .caixa-painel .card,
+        .caixa-painel .card-body,
+        .caixa-painel .table-responsive {
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        .caixa-painel .table-responsive {
+            overflow-x: visible !important;
+            overflow-y: visible !important;
+            -webkit-overflow-scrolling: auto !important;
+        }
+        .caixa-painel .sticky-top {
+            position: static !important;
+            top: auto !important;
+        }
+        .caixa-painel table {
+            width: 100% !important;
+            page-break-inside: auto;
+        }
+        .caixa-painel thead {
+            display: table-header-group;
+        }
+        .caixa-painel tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- Cabeçalho de Impressão -->
 <div class="d-none d-print-block mb-3 border-bottom pb-2">
@@ -88,9 +132,9 @@
     </div>
 </div>
 
-<div class="row g-4">
+<div class="row g-4 caixa-tabelas">
     <!-- Coluna Esquerda: Saldos Devedores e Pagamentos dos Clientes -->
-    <div class="col-lg-6">
+    <div class="col-lg-6 caixa-painel">
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h6 class="mb-0 fw-bold text-primary">
@@ -147,7 +191,7 @@
     </div>
 
     <!-- Coluna Direita: Lançamentos do Caixa (Manuais + Pagamentos Sincronizados) -->
-    <div class="col-lg-6">
+    <div class="col-lg-6 caixa-painel">
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h6 class="mb-0 fw-bold text-primary">

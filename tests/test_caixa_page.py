@@ -122,6 +122,18 @@ class CaixaPageTests(unittest.TestCase):
         self.assertIn("iniciar_sistema.bat", vbscript)
         self.assertIn("python ausente", vbscript)
 
+    def test_cash_print_expands_scrollable_tables_and_stacks_the_panels(self):
+        response = self.app_module.app.test_client().get("/caixa")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('class="row g-4 caixa-tabelas"', html)
+        self.assertEqual(html.count('class="col-lg-6 caixa-painel"'), 2)
+        self.assertIn(".caixa-painel .table-responsive", html)
+        self.assertIn("max-height: none !important", html)
+        self.assertIn("overflow: visible !important", html)
+        self.assertIn(".caixa-painel thead {", html)
+        self.assertIn("display: table-header-group", html)
+
     def test_health_endpoint_identifies_the_running_application(self):
         response = self.app_module.app.test_client().get("/healthz")
         self.assertEqual(response.status_code, 200)
