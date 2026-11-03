@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import math
 import shutil
 import sqlite3
 import calendar
@@ -1188,7 +1189,15 @@ def obter_fatura_cliente(fatura_id):
     conn = get_db_connection()
     row = conn.execute(
         """
-        SELECT f.*, c.nome AS cliente_nome
+        SELECT f.*, c.nome AS cliente_nome,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM faturas_cliente anterior
+                   WHERE anterior.cliente_id = f.cliente_id AND anterior.periodo < f.periodo
+               ) THEN 0 ELSE 1 END AS pode_ajustar_saldo_abertura,
+               (
+                   SELECT MAX(anterior.periodo) FROM faturas_cliente anterior
+                   WHERE anterior.cliente_id = f.cliente_id AND anterior.periodo < f.periodo
+               ) AS periodo_anterior
         FROM faturas_cliente f
         JOIN clientes c ON c.id = f.cliente_id
         WHERE f.id = ?
@@ -1224,6 +1233,90 @@ def obter_saldo_abertura_fatura(cliente_id, periodo):
     try:
         saldo = _saldo_abertura_novo_periodo_conn(conn, int(cliente_id), str(periodo))
         return saldo
+    finally:
+        conn.close()
+
+
+def ajustar_saldo_abertura_fatura(fatura_id, novo_saldo, motivo="", usuario="sistema"):
+    """Ajusta, com auditoria, a abertura da primeira fatura reaberta do cliente."""
+    valor_texto = "" if novo_saldo is None else str(novo_saldo).strip()
+    valor_texto = valor_texto.replace("R$", "").strip()
+    formato_br_valido = re.fullmatch(
+        r"-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?", valor_texto
+    )
+    formato_decimal_valido = re.fullmatch(r"-?\d+\.\d{1,2}", valor_texto)
+    if not valor_texto or not (formato_br_valido or formato_decimal_valido):
+        return False, "Informe um saldo válido, por exemplo 6.315,00."
+    novo_saldo = parse_money(valor_texto)
+    if not math.isfinite(novo_saldo):
+        return False, "O saldo informado não é válido."
+    novo_saldo = round(float(novo_saldo), 2)
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            fatura = conn.execute(
+                "SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura_id),)
+            ).fetchone()
+            if not fatura:
+                return False, "Fatura não encontrada."
+            if fatura["status"] != "reaberta":
+                return False, "Reabra a fatura antes de ajustar o saldo de abertura."
+            fatura_anterior = conn.execute(
+                """
+                SELECT periodo FROM faturas_cliente
+                WHERE cliente_id = ? AND periodo < ?
+                ORDER BY periodo DESC LIMIT 1
+                """,
+                (int(fatura["cliente_id"]), str(fatura["periodo"])),
+            ).fetchone()
+            if fatura_anterior:
+                return False, (
+                    f"O saldo de abertura é transportado da fatura {fatura_anterior['periodo']}. "
+                    "Reabra e corrija a fatura anterior."
+                )
+
+            saldo_anterior = round(float(fatura["saldo_abertura"] or 0.0), 2)
+            if abs(saldo_anterior - novo_saldo) < 0.005:
+                return False, "O saldo informado é igual ao atual; nenhuma alteração foi feita."
+
+            lancamentos_abertos = conn.execute(
+                """
+                SELECT COUNT(*) FROM lancamentos
+                WHERE cliente_id = ? AND fatura_id IS NULL
+                  AND data_lancamento > ?
+                """,
+                (int(fatura["cliente_id"]), str(fatura["data_fim"])),
+            ).fetchone()[0]
+            antes = dict(fatura)
+            conn.execute(
+                "UPDATE faturas_cliente SET saldo_abertura = ? WHERE id = ?",
+                (novo_saldo, int(fatura_id)),
+            )
+            saldo_transportado = _recalcular_faturas_cliente_conn(
+                conn, int(fatura["cliente_id"]), periodo_origem=str(fatura["periodo"])
+            )
+            depois = conn.execute(
+                "SELECT * FROM faturas_cliente WHERE id = ?", (int(fatura_id),)
+            ).fetchone()
+            _registrar_auditoria_fatura_conn(
+                conn,
+                int(fatura_id),
+                "ajuste_saldo_abertura",
+                usuario,
+                motivo,
+                {
+                    "antes": antes,
+                    "depois": dict(depois),
+                    "saldo_abertura_anterior": saldo_anterior,
+                    "saldo_abertura_novo": novo_saldo,
+                    "saldo_transportado_para_abertos": saldo_transportado,
+                    "lancamentos_abertos_posteriores_atualizados": int(lancamentos_abertos),
+                },
+            )
+        return True, float(saldo_transportado or 0.0)
+    except Exception as exc:
+        return False, str(exc)
     finally:
         conn.close()
 

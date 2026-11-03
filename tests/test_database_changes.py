@@ -389,6 +389,142 @@ class DatabaseChangeTests(unittest.TestCase):
         self.assertEqual(tuple(september_service), ("Serviços de setembro", 5842.5))
         self.assertEqual([tuple(row) for row in remaining_snapshots], [(8852.5, 8852.5)])
 
+    def test_adjusting_reopened_first_invoice_recalculates_later_balances_and_is_audited(self):
+        client_id = database.criar_cliente(
+            "Cliente Teste Ajuste Saldo", fatura_anterior=6947.50
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO faturas_cliente
+                    (cliente_id, periodo, data_inicio, data_fim, saldo_abertura,
+                     status, data_fechamento, data_reabertura)
+                VALUES (?, '2026-10', '2026-10-01', '2026-10-31', 6947.50,
+                        'reaberta', '2026-11-03T08:28:43', '2026-11-03T14:46:22')
+                """,
+                (client_id,),
+            )
+            fatura_id = cursor.lastrowid
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, identificado, origem, data_lancamento, fatura_anterior,
+                     pagamento_fatura_anterior, saldo_fatura_anterior, fatura_id, observacao)
+                VALUES (?, 1, 'manual', '2026-10-15', 6947.50, 0, 6947.50, ?, 'Serviços de outubro')
+                """,
+                (client_id, fatura_id),
+            )
+            outubro_servico_id = cursor.lastrowid
+            conn.execute(
+                """
+                INSERT INTO servicos (lancamento_id, descricao, quantidade, valor)
+                VALUES (?, 'Serviços de outubro', 1, 1897.50)
+                """,
+                (outubro_servico_id,),
+            )
+            for observacao in ('Pagamento 1', 'Pagamento 2'):
+                conn.execute(
+                    """
+                    INSERT INTO lancamentos
+                        (cliente_id, identificado, origem, data_lancamento, fatura_anterior,
+                         pagamento_fatura_anterior, saldo_fatura_anterior, fatura_id, observacao)
+                    VALUES (?, 1, 'manual', '2026-10-30', 6947.50, 2000, 4947.50, ?, ?)
+                    """,
+                    (client_id, fatura_id, observacao),
+                )
+            cursor = conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (cliente_id, identificado, origem, data_lancamento, fatura_anterior,
+                     pagamento_fatura_anterior, saldo_fatura_anterior, observacao)
+                VALUES (?, 1, 'manual', '2026-11-03', 4845.00, 0, 4845.00, 'Serviço de novembro')
+                """,
+                (client_id,),
+            )
+            novembro_id = cursor.lastrowid
+            conn.execute(
+                """
+                INSERT INTO servicos (lancamento_id, descricao, quantidade, valor)
+                VALUES (?, 'Serviço de novembro', 1, 282.50)
+                """,
+                (novembro_id,),
+            )
+            conn.execute(
+                "UPDATE clientes SET fatura_anterior = 4845.00 WHERE id = ?", (client_id,)
+            )
+
+        ok, saldo_transportado = database.ajustar_saldo_abertura_fatura(
+            fatura_id, "6.315,00", "Saldo de setembro confirmado"
+        )
+        self.assertTrue(ok, saldo_transportado)
+        self.assertEqual(saldo_transportado, 4212.50)
+
+        with sqlite3.connect(self.db_path) as conn:
+            fatura = conn.execute(
+                "SELECT saldo_abertura, total_servicos, total_pagamento_fatura_anterior, saldo_fechamento, status FROM faturas_cliente WHERE id = ?",
+                (fatura_id,),
+            ).fetchone()
+            snapshots = conn.execute(
+                "SELECT fatura_anterior, saldo_fatura_anterior FROM lancamentos WHERE fatura_id = ? ORDER BY id",
+                (fatura_id,),
+            ).fetchall()
+            novembro = conn.execute(
+                "SELECT fatura_anterior, saldo_fatura_anterior, fatura_id FROM lancamentos WHERE id = ?",
+                (novembro_id,),
+            ).fetchone()
+            saldo_cliente = conn.execute(
+                "SELECT fatura_anterior FROM clientes WHERE id = ?", (client_id,)
+            ).fetchone()[0]
+            auditoria = conn.execute(
+                "SELECT acao, motivo, detalhes FROM faturas_auditoria WHERE fatura_id = ? ORDER BY id DESC LIMIT 1",
+                (fatura_id,),
+            ).fetchone()
+        self.assertEqual(tuple(fatura), (6315.00, 1897.50, 4000.00, 4212.50, "reaberta"))
+        self.assertEqual(
+            [tuple(row) for row in snapshots],
+            [(6315.00, 6315.00), (6315.00, 4315.00), (6315.00, 4315.00)],
+        )
+        self.assertEqual(tuple(novembro), (4212.50, 4212.50, None))
+        self.assertEqual(saldo_cliente, 4212.50)
+        self.assertEqual(auditoria[0], "ajuste_saldo_abertura")
+        self.assertEqual(auditoria[1], "Saldo de setembro confirmado")
+        detalhes = json.loads(auditoria[2])
+        self.assertEqual(detalhes["saldo_abertura_anterior"], 6947.50)
+        self.assertEqual(detalhes["saldo_abertura_novo"], 6315.00)
+        self.assertEqual(detalhes["lancamentos_abertos_posteriores_atualizados"], 1)
+
+    def test_opening_balance_adjustment_requires_reopening_and_no_prior_invoice(self):
+        client_id = database.criar_cliente("Cliente Teste Bloqueio Saldo")
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO faturas_cliente
+                    (cliente_id, periodo, data_inicio, data_fim, saldo_abertura, status)
+                VALUES (?, '2026-09', '2026-09-01', '2026-09-30', 100, 'fechada')
+                """,
+                (client_id,),
+            )
+            setembro_id = cursor.lastrowid
+            cursor = conn.execute(
+                """
+                INSERT INTO faturas_cliente
+                    (cliente_id, periodo, data_inicio, data_fim, saldo_abertura, status)
+                VALUES (?, '2026-10', '2026-10-01', '2026-10-31', 100, 'reaberta')
+                """,
+                (client_id,),
+            )
+            outubro_id = cursor.lastrowid
+
+        ok, mensagem = database.ajustar_saldo_abertura_fatura(outubro_id, "250,00")
+        self.assertFalse(ok)
+        self.assertIn("fatura 2026-09", mensagem)
+        ok, mensagem = database.ajustar_saldo_abertura_fatura(setembro_id, "250,00")
+        self.assertFalse(ok)
+        self.assertIn("Reabra a fatura", mensagem)
+        ok, mensagem = database.ajustar_saldo_abertura_fatura(outubro_id, "valor inválido")
+        self.assertFalse(ok)
+        self.assertIn("saldo válido", mensagem)
+
     def test_archive_preserves_stock_cash_services_and_hotfolder_links(self):
         produto = database.listar_produtos()[0]
         stock_before = int(produto["estoque_atual"] or 0)

@@ -260,6 +260,41 @@ class CaixaPageTests(unittest.TestCase):
             ],
         }
 
+    def test_reopened_invoice_detail_allows_audited_opening_balance_correction(self):
+        client = self.app_module.app.test_client()
+        fatura = {
+            "id": 987,
+            "cliente_id": 5,
+            "cliente_nome": "Exxograf",
+            "periodo": "2026-10",
+            "periodo_anterior": None,
+            "pode_ajustar_saldo_abertura": 1,
+            "saldo_abertura": 6947.50,
+            "status": "reaberta",
+        }
+        with patch.object(database, "obter_fatura_cliente", return_value=fatura), \
+             patch.object(database, "listar_lancamentos", return_value=[]), \
+             patch.object(database, "listar_auditoria_fatura", return_value=[]):
+            response = client.get("/faturas/987")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('name="saldo_abertura"', html)
+        self.assertIn('value="6.947,50"', html)
+        self.assertIn("Corrigir saldo trazido do mês anterior", html)
+        self.assertIn("A alteração será auditada", html)
+
+        with patch.object(
+            database, "ajustar_saldo_abertura_fatura", return_value=(True, 4212.50)
+        ) as adjust:
+            response = client.post(
+                "/faturas/987/saldo-abertura",
+                data={"saldo_abertura": "6.315,00", "motivo": "Saldo confirmado"},
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/faturas/987")
+        adjust.assert_called_once_with(987, "6.315,00", "Saldo confirmado")
+
     def test_open_monthly_report_embeds_new_and_edit_launch_actions(self):
         client = self.app_module.app.test_client()
         cliente = {"id": 1, "nome": "Cliente Teste", "fatura_anterior": 0.0}

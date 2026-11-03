@@ -837,6 +837,25 @@ def reabrir_fatura_route(fatura_id):
     return redirect(url_for("fatura_detalhe_page", fatura_id=fatura_id))
 
 
+@app.route("/faturas/<int:fatura_id>/saldo-abertura", methods=["POST"])
+def ajustar_saldo_abertura_fatura_route(fatura_id):
+    novo_saldo = request.form.get("saldo_abertura")
+    motivo = (request.form.get("motivo") or "").strip()
+    ok, resultado = database.ajustar_saldo_abertura_fatura(
+        fatura_id, novo_saldo, motivo
+    )
+    if ok:
+        flash(
+            "Saldo de abertura corrigido. Novo saldo transportado: "
+            f"R$ {database.format_money_br(resultado)}.",
+            "success",
+        )
+    else:
+        categoria = "info" if "igual ao atual" in str(resultado) else "danger"
+        flash(f"Não foi possível ajustar o saldo de abertura: {resultado}", categoria)
+    return redirect(url_for("fatura_detalhe_page", fatura_id=fatura_id))
+
+
 @app.route("/faturas/<int:fatura_id>/fechar", methods=["POST"])
 def fechar_fatura_reaberta_route(fatura_id):
     motivo = (request.form.get("motivo") or "").strip()

@@ -39,6 +39,32 @@
     <div class="col-md-3"><div class="card h-100"><div class="card-body"><div class="small text-muted">Saldo recalculado</div><div class="fs-5 fw-bold text-primary">R$ {{ totais.saldo_fechamento_calculado|moeda }}</div></div></div></div>
 </div>
 
+{% if fatura.status == 'reaberta' and fatura.pode_ajustar_saldo_abertura %}
+<div class="card border-warning mb-4 no-print">
+    <div class="card-header fw-bold text-warning-emphasis"><i class="fas fa-scale-balanced me-1"></i>Corrigir saldo trazido do mês anterior</div>
+    <div class="card-body">
+        <p class="small text-muted">Ajuste o saldo de abertura desta primeira fatura registrada do cliente. O fechamento da fatura e os lançamentos abertos dos meses posteriores serão recalculados; a fatura continuará reaberta até você concluir a revisão. A alteração será auditada, mesmo sem motivo informado.</p>
+        <form method="POST" action="{{ url_for('ajustar_saldo_abertura_fatura_route', fatura_id=fatura.id) }}" class="row g-2 align-items-end" data-processing-message="Recalculando o saldo e os períodos posteriores..." onsubmit="return confirm('Corrigir o saldo de abertura e recalcular os períodos posteriores? A alteração ficará registrada na auditoria.');">
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Saldo de abertura correto</label>
+                <div class="input-group"><span class="input-group-text">R$</span><input class="form-control" type="text" inputmode="decimal" name="saldo_abertura" value="{{ fatura.saldo_abertura|moeda }}" required></div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Motivo da correção (opcional)</label>
+                <input class="form-control" name="motivo" maxlength="500" placeholder="Ex.: saldo confirmado no fechamento de setembro">
+            </div>
+            <div class="col-md-2 d-grid">
+                <button class="btn btn-warning fw-bold" type="submit"><i class="fas fa-calculator me-1"></i>Atualizar saldo</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% elif fatura.status == 'reaberta' and fatura.periodo_anterior %}
+<div class="alert alert-info no-print">
+    O saldo de abertura desta fatura é transportado da fatura de <strong>{{ fatura.periodo_anterior }}</strong>. Reabra e corrija a fatura anterior para recalcular este saldo.
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header fw-bold">Lançamentos e serviços preservados ({{ lancamentos|length }})</div>
     <div class="table-responsive">
