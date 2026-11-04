@@ -139,6 +139,13 @@ class CaixaPageTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"service": "sistema-terra", "status": "ok"})
 
+    def test_root_route_renders_the_daily_dashboard(self):
+        response = self.app_module.app.test_client().get("/")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Lanc. Diário", html)
+        self.assertIn("Sistema Terra", html)
+
     def test_startup_waiter_only_accepts_the_sistema_terra_health_response(self):
         with patch.object(wait_for_server.http.client, "HTTPConnection") as connection_class, \
              patch.dict(os.environ, {"PORT": "5000"}), \

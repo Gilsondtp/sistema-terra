@@ -1433,7 +1433,7 @@ def processar_arquivo_hotfolder(
 
 
 def escanear_diretorio_hotfolder(diretorio_raiz, indice_nomes_ps=None):
-    """
+    r"""
     Escaneia todas as subpastas dentro de diretorio_raiz (ex: \\RIPCTP\Manuela\OutPut ou pasta local).
     Coleta APENAS arquivos .tif, .tiff ou .tff respeitando a data real de cada arquivo.
     """
